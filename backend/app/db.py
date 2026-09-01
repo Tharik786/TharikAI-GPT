@@ -15,26 +15,43 @@ load_dotenv()
 import urllib.parse
 
 def get_db_params():
+    # Primary: Read DATABASE_URL or SUPABASE_DB_URL from environment variables
     database_url = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL")
-    if database_url:
+    if database_url and database_url.strip():
+        url = database_url.strip().strip("'\"")
         # Standardize postgres:// to postgresql://
-        if database_url.startswith("postgres://"):
-            database_url = "postgresql://" + database_url[len("postgres://"):]
-        parsed = urllib.parse.urlparse(database_url)
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        parsed = urllib.parse.urlparse(url)
+        if not parsed.hostname:
+            raise ValueError("DATABASE_URL is missing host or hostname.")
+
         return {
-            "user": parsed.username or "",
+            "user": urllib.parse.unquote(parsed.username or ""),
             "password": urllib.parse.unquote(parsed.password or ""),
-            "host": parsed.hostname or "localhost",
+            "host": parsed.hostname,
             "port": int(parsed.port or 5432),
-            "database": parsed.path.lstrip("/") or "postgres",
+            "database": parsed.path.lstrip("/").split("?")[0] or "postgres",
+            "sslmode": urllib.parse.parse_qs(parsed.query).get("sslmode", [""])[0].lower(),
         }
-    return {
-        "user": os.getenv("SUPABASE_DB_USER") or os.getenv("POSTGRES_USER", "postgres"),
-        "password": os.getenv("SUPABASE_DB_PASSWORD") or os.getenv("POSTGRES_PASSWORD", ""),
-        "host": os.getenv("SUPABASE_DB_HOST") or os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("SUPABASE_DB_PORT") or os.getenv("POSTGRES_PORT", "5432")),
-        "database": os.getenv("SUPABASE_DB_NAME") or os.getenv("POSTGRES_DB", "postgres"),
-    }
+
+    # Secondary fallback: Individual Supabase / PostgreSQL environment variables
+    host = os.getenv("SUPABASE_DB_HOST") or os.getenv("POSTGRES_HOST")
+    if host and host.strip():
+        return {
+            "user": os.getenv("SUPABASE_DB_USER") or os.getenv("POSTGRES_USER", "postgres"),
+            "password": os.getenv("SUPABASE_DB_PASSWORD") or os.getenv("POSTGRES_PASSWORD", ""),
+            "host": host.strip(),
+            "port": int(os.getenv("SUPABASE_DB_PORT") or os.getenv("POSTGRES_PORT", "5432")),
+            "database": os.getenv("SUPABASE_DB_NAME") or os.getenv("POSTGRES_DB", "postgres"),
+            "sslmode": "",
+        }
+
+    # If neither DATABASE_URL nor host is configured, do NOT fallback to localhost:5432
+    raise ValueError(
+        "Database configuration error: DATABASE_URL environment variable is not set. "
+        "Please add DATABASE_URL in your Render Web Service Environment settings."
+    )
 
 
 def get_db_connection():
@@ -42,8 +59,9 @@ def get_db_connection():
 
     # Cloud hosted databases (Supabase, Neon, Railway, Render) require SSL
     ssl_enabled = os.getenv("DB_SSL", "true").lower() not in ("0", "false", "no", "off")
+    ssl_not_disabled = params.get("sslmode") != "disable"
     context = None
-    if ssl_enabled and params["host"] not in ("localhost", "127.0.0.1"):
+    if ssl_enabled and ssl_not_disabled and params["host"] not in ("localhost", "127.0.0.1"):
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
