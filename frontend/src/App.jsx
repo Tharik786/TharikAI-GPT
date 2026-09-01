@@ -82,26 +82,67 @@ export default function App() {
     return conv.id;
   };
 
-  const send = async (text) => {
+  const send = async (payload) => {
     setError(null);
     setDraft("");
     const convId = ensureConversation();
 
-    const userMsg = { id: `local-${Date.now()}`, role: "user", content: text };
+    const text = typeof payload === "string" ? payload : payload?.text || "";
+    const attachments = typeof payload === "object" && Array.isArray(payload?.attachments) ? payload.attachments : [];
+
+    const userMsg = {
+      id: `local-${Date.now()}`,
+      role: "user",
+      content: text,
+      attachments: attachments.map((a) => ({
+        name: a.name,
+        size: a.size,
+        type: a.type,
+        isImage: a.isImage,
+        dataUrl: a.dataUrl,
+        pageCount: a.pageCount,
+        textContent: a.textContent,
+      })),
+    };
     const assistantMsg = { id: `stream-${Date.now()}`, role: "assistant", content: "" };
 
     let working = [...messages, userMsg, assistantMsg];
     setMessages(working);
     setStreamingId(assistantMsg.id);
 
-    // Auto-title a fresh chat from its first message.
+    // Auto-title a fresh chat from its first message or document name.
     const conv = storage.get(convId);
     if (conv && conv.title === "New chat") {
-      const title = text.slice(0, 48) + (text.length > 48 ? "..." : "");
+      const displayTitle = text || (attachments[0] ? `Doc: ${attachments[0].name}` : "New chat");
+      const title = displayTitle.slice(0, 48) + (displayTitle.length > 48 ? "..." : "");
       storage.rename(convId, title);
     }
 
-    const historyForLLM = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }));
+    // Prepare full document content for the AI model
+    let promptForLLM = text;
+    if (attachments.length > 0) {
+      attachments.forEach((att) => {
+        if (att.isImage) {
+          promptForLLM += `\n\n[Attached image: ${att.name}]`;
+        } else if (att.textContent) {
+          const pageInfo = att.pageCount ? ` (${att.pageCount} pages)` : "";
+          promptForLLM += `\n\n--- Document Attached: ${att.name}${pageInfo} ---\n${att.textContent}\n--- End of Document ---`;
+        }
+      });
+    }
+
+    const historyForLLM = [...messages, { role: "user", content: promptForLLM }].map((m) => {
+      if (m.attachments && m.attachments.length > 0 && !m.content.includes("--- Document Attached:")) {
+        let full = m.content;
+        m.attachments.forEach((att) => {
+          if (att.textContent) {
+            full += `\n\n--- Document Attached: ${att.name} ---\n${att.textContent}\n--- End of Document ---`;
+          }
+        });
+        return { role: m.role, content: full };
+      }
+      return { role: m.role, content: m.content };
+    });
 
     await streamChat(historyForLLM, {
       onDelta: (delta) => {

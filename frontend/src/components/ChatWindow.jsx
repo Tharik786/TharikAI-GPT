@@ -105,6 +105,7 @@ export default function ChatWindow({ user, messages, streamingId, onSuggestion }
           key={m.id}
           role={m.role}
           content={m.content}
+          attachments={m.attachments}
           isStreaming={m.id === streamingId}
           user={user}
         />

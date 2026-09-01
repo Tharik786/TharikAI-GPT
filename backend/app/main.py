@@ -13,9 +13,10 @@ load_dotenv(backend_dir / ".env")
 load_dotenv()
 
 
+import io
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -161,6 +162,65 @@ async def update_conversation_messages(body: MessagesBody):
 async def remove_conversation(conv_id: str):
     db_delete_conversation(conv_id)
     return {"success": True}
+
+
+@app.post("/api/extract-document")
+async def extract_document(file: UploadFile = File(...)):
+    """
+    Extracts clean readable text from uploaded documents (PDF, DOCX, TXT, MD, CSV, code).
+    Prevents binary byte corruption and enables AI models to read and analyze files.
+    """
+    filename = file.filename or "uploaded_file"
+    ext = filename.lower().split(".")[-1] if "." in filename else ""
+    content = await file.read()
+    
+    extracted_text = ""
+    page_count = 1
+
+    if ext == "pdf":
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(io.BytesIO(content))
+            page_count = len(reader.pages)
+            pages_text = []
+            for idx, page in enumerate(reader.pages):
+                txt = page.extract_text() or ""
+                if txt.strip():
+                    pages_text.append(f"--- Page {idx + 1} ---\n{txt.strip()}")
+            extracted_text = "\n\n".join(pages_text).strip()
+            if not extracted_text:
+                extracted_text = "[Notice: This PDF contains no extractable text. It may contain scanned images or protected content.]"
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to read PDF: {str(e)}")
+
+    elif ext in ("docx", "doc"):
+        try:
+            import docx
+            doc = docx.Document(io.BytesIO(content))
+            paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = " | ".join(c.text.strip() for c in row.cells if c.text.strip())
+                    if row_text:
+                        paragraphs.append(row_text)
+            extracted_text = "\n\n".join(paragraphs).strip()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to read Word document: {str(e)}")
+
+    else:
+        # Plain text, Markdown, CSV, JSON, code files
+        try:
+            extracted_text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            extracted_text = content.decode("latin-1", errors="ignore")
+
+    return {
+        "success": True,
+        "filename": filename,
+        "page_count": page_count,
+        "size": len(content),
+        "text": extracted_text,
+    }
 
 
 @app.post("/api/chat")

@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from "react";
+import { extractFileContent } from "../utils/documentExtractor.js";
 
 export default function InputBar({ value, onChange, onSend, disabled }) {
   const textareaRef = useRef(null);
@@ -139,32 +140,80 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
     }
   };
 
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
 
-    files.forEach((file) => {
+    for (const file of files) {
       const isImage = file.type.startsWith("image/");
-      const reader = new FileReader();
+      const filename = file.name.toLowerCase();
+      const isPdf = file.type === "application/pdf" || filename.endsWith(".pdf");
+      const isWord = filename.endsWith(".docx") || filename.endsWith(".doc");
 
       if (isImage) {
+        const reader = new FileReader();
         reader.onload = () => {
           setAttachments((prev) => [
             ...prev,
-            { name: file.name, size: file.size, type: file.type, isImage: true, dataUrl: reader.result },
+            {
+              id: `att-${Date.now()}-${Math.random()}`,
+              name: file.name,
+              size: file.size,
+              type: file.type,
+              isImage: true,
+              dataUrl: reader.result,
+            },
           ]);
         };
         reader.readAsDataURL(file);
       } else {
-        reader.onload = () => {
-          setAttachments((prev) => [
-            ...prev,
-            { name: file.name, size: file.size, type: file.type, isImage: false, textContent: reader.result },
-          ]);
-        };
-        reader.readAsText(file);
+        const tempId = `att-${Date.now()}-${Math.random()}`;
+        // Immediately add extraction chip with spinner
+        setAttachments((prev) => [
+          ...prev,
+          {
+            id: tempId,
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            isImage: false,
+            isPdf,
+            isWord,
+            isExtracting: true,
+          },
+        ]);
+
+        try {
+          const result = await extractFileContent(file);
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.id === tempId
+                ? {
+                    ...a,
+                    isExtracting: false,
+                    textContent: result.text,
+                    pageCount: result.pageCount,
+                  }
+                : a
+            )
+          );
+        } catch (err) {
+          console.error("Document extraction error:", err);
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.id === tempId
+                ? {
+                    ...a,
+                    isExtracting: false,
+                    hasError: true,
+                    errorMsg: err.message || "Failed to extract text",
+                  }
+                : a
+            )
+          );
+        }
       }
-    });
+    }
 
     e.target.value = "";
   };
@@ -176,6 +225,11 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
   const submit = () => {
     if ((!value.trim() && attachments.length === 0) || disabled) return;
 
+    if (attachments.some((a) => a.isExtracting)) {
+      alert("Please wait for document processing to finish before sending.");
+      return;
+    }
+
     if (isListening) {
       try {
         recognitionRef.current?.stop();
@@ -183,18 +237,11 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
       setIsListening(false);
     }
 
-    let fullPrompt = value.trim();
-
-    // If text files are attached, append their content to the prompt
-    attachments.forEach((att) => {
-      if (att.isImage) {
-        fullPrompt += `\n\n[Attached image: ${att.name}]`;
-      } else if (att.textContent) {
-        fullPrompt += `\n\n--- Attached File: ${att.name} ---\n${att.textContent}\n--- End of File ---`;
-      }
+    onSend({
+      text: value.trim(),
+      attachments: [...attachments],
     });
 
-    onSend(fullPrompt);
     setAttachments([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
@@ -211,7 +258,7 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
               </div>
               <div className="attach-item-texts">
                 <span className="attach-item-title">Add photos & files</span>
-                <span className="attach-item-sub">Upload from computer</span>
+                <span className="attach-item-sub">Upload PDF, Word, Code & Docs</span>
               </div>
             </button>
           </div>
@@ -221,7 +268,7 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
           ref={fileInputRef}
           type="file"
           multiple
-          accept="image/*,.pdf,.txt,.md,.json,.csv,.py,.js,.jsx,.ts,.tsx,.html,.css"
+          accept="image/*,.pdf,.docx,.doc,.txt,.md,.json,.csv,.py,.js,.jsx,.ts,.tsx,.html,.css"
           style={{ display: "none" }}
           onChange={handleFileChange}
         />
@@ -238,19 +285,43 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
         </button>
 
         <div className="input-field-wrapper">
-
-
           {/* Selected attachment preview chips */}
           {attachments.length > 0 && (
             <div className="attachment-chips-row">
               {attachments.map((att, idx) => (
-                <div key={idx} className="attachment-chip">
-                  {att.isImage ? (
+                <div
+                  key={att.id || idx}
+                  className={`attachment-chip ${att.isExtracting ? "is-extracting" : ""} ${
+                    att.hasError ? "has-error" : ""
+                  }`}
+                >
+                  {att.isExtracting ? (
+                    <span className="chip-spinner" />
+                  ) : att.isImage ? (
                     <img src={att.dataUrl} alt={att.name} className="chip-img-preview" />
+                  ) : att.isPdf ? (
+                    <span className="chip-badge chip-pdf">PDF</span>
+                  ) : att.isWord ? (
+                    <span className="chip-badge chip-doc">DOC</span>
                   ) : (
                     <FileIcon />
                   )}
-                  <span className="chip-filename" title={att.name}>{att.name}</span>
+
+                  <div className="chip-details">
+                    <span className="chip-filename" title={att.name}>
+                      {att.name}
+                    </span>
+                    {att.isExtracting ? (
+                      <span className="chip-status">Extracting text...</span>
+                    ) : att.hasError ? (
+                      <span className="chip-status chip-status-err">Extraction failed</span>
+                    ) : att.pageCount ? (
+                      <span className="chip-status">
+                        {att.pageCount} {att.pageCount === 1 ? "page" : "pages"}
+                      </span>
+                    ) : null}
+                  </div>
+
                   <button
                     type="button"
                     className="chip-remove-btn"

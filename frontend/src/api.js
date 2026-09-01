@@ -130,3 +130,20 @@ export async function deleteConversationRemote(id) {
   }
 }
 
+export async function extractDocumentRemote(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${BASE_URL}/api/extract-document`, {
+    method: "POST",
+    body: formData,
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to extract text from document.");
+  }
+  return data;
+}
+
+
