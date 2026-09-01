@@ -724,7 +724,10 @@ textarea {
 .chat-window {
   flex: 1;
   overflow-y: auto;
+  overflow-anchor: auto;
+  scrollbar-gutter: stable;
   padding: 24px 16px 8px;
+  min-height: 0;
 }
 
 .message-row {
@@ -773,20 +776,29 @@ textarea {
   font-size: 15px;
   line-height: 1.65;
   color: var(--text-primary);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .message-bubble p {
   margin: 0 0 12px;
 }
 
-.message-bubble p:last-child {
+.message-bubble p:last-child,
+.message-bubble p:last-of-type {
   margin-bottom: 0;
 }
 
-.message-bubble ul,
-.message-bubble ol {
-  margin: 0 0 12px;
-  padding-left: 22px;
+.message-bubble ul:last-child,
+.message-bubble ol:last-child,
+.message-bubble .code-block:last-child {
+  margin-bottom: 0;
+}
+
+/* While streaming, keep the last paragraph inline so the streaming dot sits seamlessly at the end of the text without adding a new line */
+.message-bubble.is-streaming p:last-of-type {
+  display: inline;
+  margin-bottom: 0;
 }
 
 .inline-code {
@@ -833,22 +845,20 @@ textarea {
   border-radius: 50%;
   background: #3b82f6;
   box-shadow: 0 0 8px rgba(59, 130, 246, 0.7);
-  margin-left: 5px;
+  margin-left: 6px;
   vertical-align: middle;
   animation: cursorPulse 0.9s ease-in-out infinite;
 }
 
 @keyframes cursorPulse {
-
   0%,
   100% {
     opacity: 0.3;
-    transform: scale(0.85);
   }
 
   50% {
     opacity: 1;
-    transform: scale(1.18);
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.9);
   }
 }
 
@@ -1606,7 +1616,7 @@ textarea {
   overflow: hidden;
   max-width: 540px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-  transition: border-color 0.2s ease, transform 0.15s ease;
+  transition: border-color 0.2s ease;
 }
 
 .msg-doc-card:hover {

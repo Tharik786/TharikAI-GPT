@@ -144,14 +144,35 @@ export default function App() {
       return { role: m.role, content: m.content };
     });
 
+    let pendingDeltas = "";
+    let rafId = null;
+
+    const flushDeltas = () => {
+      if (!pendingDeltas) return;
+      const textToAppend = pendingDeltas;
+      pendingDeltas = "";
+      working = working.map((m) =>
+        m.id === assistantMsg.id ? { ...m, content: m.content + textToAppend } : m
+      );
+      setMessages(working);
+    };
+
     await streamChat(historyForLLM, {
       onDelta: (delta) => {
-        working = working.map((m) =>
-          m.id === assistantMsg.id ? { ...m, content: m.content + delta } : m
-        );
-        setMessages(working);
+        pendingDeltas += delta;
+        if (!rafId) {
+          rafId = requestAnimationFrame(() => {
+            rafId = null;
+            flushDeltas();
+          });
+        }
       },
       onDone: () => {
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        flushDeltas();
         setStreamingId(null);
         // Persist the finished exchange
         storage.setMessages(convId, working);
@@ -165,6 +186,11 @@ export default function App() {
         }
       },
       onError: (msg) => {
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        flushDeltas();
         setError(msg);
         setStreamingId(null);
         // Still persist whatever was said

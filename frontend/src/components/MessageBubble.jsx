@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -95,63 +95,11 @@ function parseMessageContent(rawContent = "", explicitAttachments = []) {
   return { cleanText: text.trim(), attachments };
 }
 
-export default function MessageBubble({ role, content, attachments: propAttachments, isStreaming, user }) {
-  const isUser = role === "user";
-  const userInitial = getUserInitial(user);
-
-  // Extract clean text and parsed attachments (cleanly resolves raw binary PDF dumps)
-  const { cleanText, attachments } = parseMessageContent(content, propAttachments);
-
-  return (
-    <div className={`message-row ${isUser ? "message-row-user" : ""}`}>
-      <div className={`avatar ${isUser ? "avatar-user" : "avatar-assistant"}`}>
-        {isUser ? (
-          userInitial
-        ) : (
-          <img src="/ai-avatar.png" alt="TharikAI" className="avatar-ai-img" />
-        )}
-      </div>
-      <div className={`message-bubble ${isUser ? "bubble-user" : "bubble-assistant"}`}>
-        {/* Render document attachment cards above or below the message text */}
-        {attachments && attachments.length > 0 && (
-          <div className="message-attachments-container">
-            {attachments.map((att, idx) => (
-              <DocumentAttachmentCard key={idx} attachment={att} />
-            ))}
-          </div>
-        )}
-
-        {cleanText ? (
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code(props) {
-                return <CodeBlock {...props} />;
-              },
-            }}
-          >
-            {cleanText}
-          </ReactMarkdown>
-        ) : (
-          isStreaming && (
-            <div className="typing-indicator" aria-label="Thinking...">
-              <span className="typing-dot" />
-              <span className="typing-dot" />
-              <span className="typing-dot" />
-            </div>
-          )
-        )}
-        {isStreaming && cleanText && <span className="streaming-cursor" />}
-      </div>
-    </div>
-  );
-}
-
 /**
  * Beautiful attachment card displaying document metadata, type badge,
  * and an optional expandable text preview.
  */
-function DocumentAttachmentCard({ attachment }) {
+const DocumentAttachmentCard = React.memo(function DocumentAttachmentCard({ attachment }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -236,9 +184,9 @@ function DocumentAttachmentCard({ attachment }) {
       )}
     </div>
   );
-}
+});
 
-function CodeBlock({ inline, className, children, ...rest }) {
+const CodeBlock = React.memo(function CodeBlock({ inline, className, children, ...rest }) {
   const [copied, setCopied] = useState(false);
   const match = /language-(\w+)/.exec(className || "");
   const codeText = String(children).replace(/\n$/, "");
@@ -272,4 +220,68 @@ function CodeBlock({ inline, className, children, ...rest }) {
       </SyntaxHighlighter>
     </div>
   );
+});
+
+const MARKDOWN_COMPONENTS = {
+  code: CodeBlock,
+};
+
+function MessageBubble({ role, content, attachments: propAttachments, isStreaming, user }) {
+  const isUser = role === "user";
+  const userInitial = getUserInitial(user);
+
+  // Extract clean text and parsed attachments:
+  // For assistant messages, skip expensive document parsing regexes during streaming
+  const { cleanText, attachments } = useMemo(() => {
+    if (!isUser) {
+      return { cleanText: content || "", attachments: [] };
+    }
+    return parseMessageContent(content, propAttachments);
+  }, [isUser, content, propAttachments]);
+
+  return (
+    <div className={`message-row ${isUser ? "message-row-user" : ""}`}>
+      <div className={`avatar ${isUser ? "avatar-user" : "avatar-assistant"}`}>
+        {isUser ? (
+          userInitial
+        ) : (
+          <img src="/ai-avatar.png" alt="TharikAI" className="avatar-ai-img" />
+        )}
+      </div>
+      <div
+        className={`message-bubble ${isUser ? "bubble-user" : "bubble-assistant"} ${
+          isStreaming ? "is-streaming" : ""
+        }`}
+      >
+        {/* Render document attachment cards above or below the message text */}
+        {attachments && attachments.length > 0 && (
+          <div className="message-attachments-container">
+            {attachments.map((att, idx) => (
+              <DocumentAttachmentCard key={idx} attachment={att} />
+            ))}
+          </div>
+        )}
+
+        {cleanText ? (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={MARKDOWN_COMPONENTS}
+          >
+            {cleanText}
+          </ReactMarkdown>
+        ) : (
+          isStreaming && (
+            <div className="typing-indicator" aria-label="Thinking...">
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+            </div>
+          )
+        )}
+        {isStreaming && cleanText && <span className="streaming-cursor" aria-hidden="true" />}
+      </div>
+    </div>
+  );
 }
+
+export default React.memo(MessageBubble);

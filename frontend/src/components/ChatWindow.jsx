@@ -69,11 +69,59 @@ function getGreetingHeading(user) {
 }
 
 export default function ChatWindow({ user, messages, streamingId, onSuggestion }) {
-  const endRef = useRef(null);
+  const containerRef = useRef(null);
+  const isAtBottomRef = useRef(true);
+  const prevMessagesCountRef = useRef(messages.length);
+  const prevStreamingIdRef = useRef(streamingId);
+
+  // Monitor scroll position to determine if the user is anchored to bottom
+  const handleScroll = () => {
+    const container = containerRef.current;
+    if (!container) return;
+    const threshold = 120; // px threshold from bottom
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    isAtBottomRef.current = distanceFromBottom <= threshold;
+  };
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+    const container = containerRef.current;
+    if (!container) return;
+
+    const messageCountChanged = messages.length !== prevMessagesCountRef.current;
+    const wasStreaming = !!prevStreamingIdRef.current;
+    const isNowStreaming = !!streamingId;
+
+    prevMessagesCountRef.current = messages.length;
+    prevStreamingIdRef.current = streamingId;
+
+    // Case 1: A new message was added (user submitted prompt or assistant bubble created)
+    if (messageCountChanged) {
+      isAtBottomRef.current = true;
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: "smooth",
+      });
+      return;
+    }
+
+    // Case 2: Actively streaming content
+    if (isNowStreaming) {
+      // Auto-scroll instantly only when user is anchored to the bottom
+      // Setting scrollTop directly avoids browser animation interruption/shaking
+      if (isAtBottomRef.current) {
+        container.scrollTop = container.scrollHeight;
+      }
+      return;
+    }
+
+    // Case 3: Streaming just completed
+    if (wasStreaming && !isNowStreaming) {
+      if (isAtBottomRef.current) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+  }, [messages, streamingId]);
 
   if (messages.length === 0) {
     return (
@@ -99,7 +147,7 @@ export default function ChatWindow({ user, messages, streamingId, onSuggestion }
   }
 
   return (
-    <div className="chat-window">
+    <div className="chat-window" ref={containerRef} onScroll={handleScroll}>
       {messages.map((m) => (
         <MessageBubble
           key={m.id}
@@ -110,7 +158,6 @@ export default function ChatWindow({ user, messages, streamingId, onSuggestion }
           user={user}
         />
       ))}
-      <div ref={endRef} />
     </div>
   );
 }
