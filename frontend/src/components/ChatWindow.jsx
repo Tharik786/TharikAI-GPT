@@ -78,7 +78,7 @@ export default function ChatWindow({ user, messages, streamingId, onSuggestion }
   const handleScroll = () => {
     const container = containerRef.current;
     if (!container) return;
-    const threshold = 120; // px threshold from bottom
+    const threshold = 160; // px threshold from bottom
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
     isAtBottomRef.current = distanceFromBottom <= threshold;
@@ -89,37 +89,20 @@ export default function ChatWindow({ user, messages, streamingId, onSuggestion }
     if (!container) return;
 
     const messageCountChanged = messages.length !== prevMessagesCountRef.current;
-    const wasStreaming = !!prevStreamingIdRef.current;
-    const isNowStreaming = !!streamingId;
-
     prevMessagesCountRef.current = messages.length;
     prevStreamingIdRef.current = streamingId;
 
-    // Case 1: A new message was added (user submitted prompt or assistant bubble created)
+    // When a new message is added, immediately jump to bottom without smooth animation
+    // to prevent conflicting with incoming streaming tokens
     if (messageCountChanged) {
       isAtBottomRef.current = true;
-      container.scrollTo({
-        top: container.scrollHeight,
-        behavior: "smooth",
-      });
+      container.scrollTop = container.scrollHeight;
       return;
     }
 
-    // Case 2: Actively streaming content
-    if (isNowStreaming) {
-      // Auto-scroll instantly only when user is anchored to the bottom
-      // Setting scrollTop directly avoids browser animation interruption/shaking
-      if (isAtBottomRef.current) {
-        container.scrollTop = container.scrollHeight;
-      }
-      return;
-    }
-
-    // Case 3: Streaming just completed
-    if (wasStreaming && !isNowStreaming) {
-      if (isAtBottomRef.current) {
-        container.scrollTop = container.scrollHeight;
-      }
+    // Keep view anchored to bottom if user has not scrolled up
+    if (isAtBottomRef.current) {
+      container.scrollTop = container.scrollHeight;
     }
   }, [messages, streamingId]);
 
@@ -158,6 +141,7 @@ export default function ChatWindow({ user, messages, streamingId, onSuggestion }
           user={user}
         />
       ))}
+      <div className="scroll-bottom-anchor" />
     </div>
   );
 }

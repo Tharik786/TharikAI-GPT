@@ -222,8 +222,15 @@ const CodeBlock = React.memo(function CodeBlock({ inline, className, children, .
   );
 });
 
+const TableWrapper = ({ children, ...props }) => (
+  <div className="table-responsive-wrapper">
+    <table {...props}>{children}</table>
+  </div>
+);
+
 const MARKDOWN_COMPONENTS = {
   code: CodeBlock,
+  table: TableWrapper,
 };
 
 function MessageBubble({ role, content, attachments: propAttachments, isStreaming, user }) {
@@ -263,12 +270,14 @@ function MessageBubble({ role, content, attachments: propAttachments, isStreamin
         )}
 
         {cleanText ? (
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={MARKDOWN_COMPONENTS}
-          >
-            {cleanText}
-          </ReactMarkdown>
+          <div className="markdown-content">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={MARKDOWN_COMPONENTS}
+            >
+              {cleanText}
+            </ReactMarkdown>
+          </div>
         ) : (
           isStreaming && (
             <div className="typing-indicator" aria-label="Thinking...">
@@ -278,7 +287,11 @@ function MessageBubble({ role, content, attachments: propAttachments, isStreamin
             </div>
           )
         )}
-        {isStreaming && cleanText && <span className="streaming-cursor" aria-hidden="true" />}
+        {isStreaming && cleanText && (
+          <span className="streaming-dot-indicator" aria-hidden="true">
+            <span className="streaming-dot-pulse" />
+          </span>
+        )}
       </div>
     </div>
   );

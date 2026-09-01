@@ -61,6 +61,8 @@ textarea {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   background: var(--bg-panel);
 }
 
@@ -734,7 +736,9 @@ textarea {
   display: flex;
   gap: 12px;
   max-width: 720px;
+  width: 100%;
   margin: 0 auto 22px;
+  overflow-anchor: none;
 }
 
 .avatar {
@@ -784,21 +788,95 @@ textarea {
   margin: 0 0 12px;
 }
 
-.message-bubble p:last-child,
-.message-bubble p:last-of-type {
+.message-bubble p:last-child {
   margin-bottom: 0;
 }
 
-.message-bubble ul:last-child,
-.message-bubble ol:last-child,
-.message-bubble .code-block:last-child {
-  margin-bottom: 0;
+.markdown-content > *:last-child {
+  margin-bottom: 0 !important;
 }
 
-/* While streaming, keep the last paragraph inline so the streaming dot sits seamlessly at the end of the text without adding a new line */
-.message-bubble.is-streaming p:last-of-type {
-  display: inline;
-  margin-bottom: 0;
+.message-bubble h1,
+.message-bubble h2,
+.message-bubble h3,
+.message-bubble h4 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.message-bubble h1:first-child,
+.message-bubble h2:first-child,
+.message-bubble h3:first-child,
+.message-bubble h4:first-child {
+  margin-top: 0;
+}
+
+.message-bubble h1 { font-size: 1.35em; }
+.message-bubble h2 { font-size: 1.2em; }
+.message-bubble h3 { font-size: 1.1em; }
+.message-bubble h4 { font-size: 1.0em; }
+
+.message-bubble blockquote {
+  margin: 12px 0;
+  padding: 6px 14px;
+  border-left: 3px solid #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 0 8px 8px 0;
+  color: var(--text-secondary);
+}
+
+.message-bubble ul,
+.message-bubble ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.message-bubble li {
+  margin-bottom: 4px;
+}
+
+.message-bubble li > p {
+  margin: 0;
+}
+
+/* Markdown Tables with fixed layout to prevent column width shifts during streaming */
+.table-responsive-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  margin: 14px 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+
+.message-bubble table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+  font-size: 13.5px;
+  table-layout: fixed;
+}
+
+.message-bubble th,
+.message-bubble td {
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.message-bubble th {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.message-bubble tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .inline-code {
@@ -836,17 +914,25 @@ textarea {
   color: var(--text-primary);
 }
 
-/* Streaming Loading & Cursor Animation */
-.streaming-cursor,
-.cursor-blink {
+/* Zero-height streaming indicator: sits inline at the end without adding vertical height */
+.streaming-dot-indicator {
+  display: block;
+  height: 0;
+  line-height: 0;
+  overflow: visible;
+  margin: 0;
+  padding: 0;
+}
+
+.streaming-dot-pulse {
   display: inline-block;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: #3b82f6;
-  box-shadow: 0 0 8px rgba(59, 130, 246, 0.7);
-  margin-left: 6px;
-  vertical-align: middle;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.8);
+  transform: translateY(-16px);
+  margin-left: 4px;
   animation: cursorPulse 0.9s ease-in-out infinite;
 }
 
@@ -858,8 +944,15 @@ textarea {
 
   50% {
     opacity: 1;
-    box-shadow: 0 0 10px rgba(59, 130, 246, 0.9);
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.95);
   }
+}
+
+.scroll-bottom-anchor {
+  height: 1px;
+  width: 100%;
+  overflow-anchor: auto;
+  pointer-events: none;
 }
 
 /* Typing wave dots while thinking */
