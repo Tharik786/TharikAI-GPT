@@ -1,6 +1,54 @@
 import React, { useRef, useState, useEffect } from "react";
 import { extractFileContent } from "../utils/documentExtractor.js";
 
+// Smart transcript merger to prevent Web Speech API doubling / tripling bugs across browsers
+function mergeTranscriptChunks(chunks) {
+  let finalStr = "";
+  for (let chunk of chunks) {
+    chunk = (chunk || "").trim();
+    if (!chunk) continue;
+    if (!finalStr) {
+      finalStr = chunk;
+      continue;
+    }
+
+    // Ignore exact duplicates or if finalStr already ends with this chunk
+    if (finalStr === chunk || finalStr.endsWith(" " + chunk) || finalStr.endsWith(chunk)) {
+      continue;
+    }
+
+    // If chunk contains the entire previous finalStr (cumulative result bug in some mobile browsers)
+    if (chunk.startsWith(finalStr)) {
+      finalStr = chunk;
+      continue;
+    }
+
+    // Check for word-level suffix/prefix overlap between chunks
+    const finalWords = finalStr.split(/\s+/);
+    const chunkWords = chunk.split(/\s+/);
+    let overlapFound = false;
+    const maxOverlap = Math.min(finalWords.length, chunkWords.length);
+
+    for (let len = maxOverlap; len > 0; len--) {
+      const endWords = finalWords.slice(-len).join(" ").toLowerCase();
+      const startWords = chunkWords.slice(0, len).join(" ").toLowerCase();
+      if (endWords === startWords) {
+        const nonOverlapping = chunkWords.slice(len).join(" ");
+        if (nonOverlapping) {
+          finalStr += " " + nonOverlapping;
+        }
+        overlapFound = true;
+        break;
+      }
+    }
+
+    if (!overlapFound) {
+      finalStr += " " + chunk;
+    }
+  }
+  return finalStr;
+}
+
 export default function InputBar({ value, onChange, onSend, disabled }) {
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -11,78 +59,137 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(true);
   const recognitionRef = useRef(null);
+  const baseTextRef = useRef("");
   const valueRef = useRef(value);
 
   useEffect(() => {
     valueRef.current = value;
   }, [value]);
 
-  // Web Speech API initialization for voice-to-text
+  // Check Web Speech API availability on mount
   useEffect(() => {
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       setVoiceSupported(false);
+    }
+
+    return () => {
+      stopListening();
+    };
+  }, []);
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+        recognitionRef.current.abort();
+      } catch {}
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
+  };
+
+  const startListening = () => {
+    stopListening();
+
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setVoiceSupported(false);
+      alert("Voice-to-text is not supported in this browser. Please try Chrome, Edge, or Safari.");
       return;
     }
 
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = navigator.language || "en-US";
 
-    let prefixText = "";
+      // Save whatever text was already typed before starting voice input
+      baseTextRef.current = (valueRef.current || "").trim();
 
-    recognition.onstart = () => {
-      setIsListening(true);
-      const current = valueRef.current || "";
-      prefixText = current ? (current.endsWith(" ") ? current : current + " ") : "";
-    };
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
 
-    recognition.onresult = (event) => {
-      let finalSpeech = "";
-      let interimSpeech = "";
+      recognition.onresult = (event) => {
+        const finalChunks = [];
+        const interimChunks = [];
 
-      for (let i = 0; i < event.results.length; ++i) {
-        const chunk = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalSpeech += chunk + " ";
-        } else {
-          interimSpeech += chunk;
+        for (let i = 0; i < event.results.length; ++i) {
+          const res = event.results[i];
+          if (!res || !res[0]) continue;
+
+          const transcript = res[0].transcript || "";
+          const confidence = res[0].confidence;
+
+          // Ignore duplicate results with 0 confidence (known Android Chrome bug)
+          if (confidence !== undefined && confidence === 0 && res.isFinal) {
+            continue;
+          }
+
+          if (res.isFinal) {
+            finalChunks.push(transcript);
+          } else {
+            interimChunks.push(transcript);
+          }
         }
-      }
 
-      const updated = (prefixText + finalSpeech + interimSpeech).trimStart();
-      onChange(updated);
+        const finalSpeech = mergeTranscriptChunks(finalChunks);
+        const interimSpeech = mergeTranscriptChunks(interimChunks);
 
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-        textareaRef.current.style.height =
-          Math.min(textareaRef.current.scrollHeight, 200) + "px";
-      }
-    };
+        let spokenText = finalSpeech;
+        if (interimSpeech) {
+          if (!spokenText) {
+            spokenText = interimSpeech;
+          } else {
+            spokenText = mergeTranscriptChunks([spokenText, interimSpeech]);
+          }
+        }
 
-    recognition.onerror = (event) => {
-      console.warn("Speech recognition error:", event.error);
-      if (event.error === "not-allowed") {
-        alert("Microphone permission was denied. Please allow microphone access in your browser settings.");
-      }
+        const base = baseTextRef.current;
+        const updated = base
+          ? (spokenText ? `${base} ${spokenText}` : base)
+          : spokenText;
+
+        onChange(updated);
+
+        if (textareaRef.current) {
+          textareaRef.current.style.height = "auto";
+          textareaRef.current.style.height =
+            Math.min(textareaRef.current.scrollHeight, 200) + "px";
+          textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.warn("Speech recognition error:", event.error);
+        if (event.error === "not-allowed") {
+          alert("Microphone permission was denied. Please allow microphone access in your browser settings.");
+        }
+        setIsListening(false);
+        recognitionRef.current = null;
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        recognitionRef.current = null;
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.warn("Speech recognition start failed:", err);
       setIsListening(false);
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-
-    recognitionRef.current = recognition;
-
-    return () => {
-      try {
-        recognition.stop();
-      } catch {}
-    };
-  }, [onChange]);
+      recognitionRef.current = null;
+    }
+  };
 
   const toggleListening = () => {
     if (!voiceSupported) {
@@ -91,16 +198,9 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
     }
 
     if (isListening) {
-      try {
-        recognitionRef.current?.stop();
-      } catch {}
-      setIsListening(false);
+      stopListening();
     } else {
-      try {
-        recognitionRef.current?.start();
-      } catch (err) {
-        console.warn("Speech recognition start failed:", err);
-      }
+      startListening();
     }
   };
 
@@ -231,10 +331,7 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
     }
 
     if (isListening) {
-      try {
-        recognitionRef.current?.stop();
-      } catch {}
-      setIsListening(false);
+      stopListening();
     }
 
     onSend({
