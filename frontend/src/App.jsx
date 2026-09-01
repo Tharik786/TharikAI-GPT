@@ -12,6 +12,14 @@ import {
   deleteConversationRemote,
 } from "./api.js";
 import { storage, authStorage } from "./storage.js";
+import {
+  speakMessage,
+  stopSpeech,
+  pauseSpeech,
+  resumeSpeech,
+  setSpeechRate,
+  subscribeToSpeech,
+} from "./utils/speechService.js";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -22,6 +30,24 @@ export default function App() {
   const [streamingId, setStreamingId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [error, setError] = useState(null);
+
+  // Text-To-Speech state
+  const [speechState, setSpeechState] = useState({
+    isPlaying: false,
+    isPaused: false,
+    messageId: null,
+    rate: 1.0,
+  });
+
+  useEffect(() => {
+    const unsubscribe = subscribeToSpeech((state) => {
+      setSpeechState(state);
+    });
+    return () => {
+      unsubscribe();
+      stopSpeech();
+    };
+  }, []);
 
   // Auth modal state
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -59,6 +85,7 @@ export default function App() {
   };
 
   const openConversation = (id) => {
+    stopSpeech();
     const conv = storage.get(id);
     setActiveId(id);
     setMessages(conv ? conv.messages : []);
@@ -66,6 +93,7 @@ export default function App() {
   };
 
   const handleNewChat = () => {
+    stopSpeech();
     setActiveId(null);
     setMessages([]);
     setSidebarOpen(false);
@@ -217,6 +245,7 @@ export default function App() {
   };
 
   const handleDelete = (id) => {
+    stopSpeech();
     storage.remove(id);
     setConversations(storage.list());
     if (id === activeId) {
@@ -229,6 +258,7 @@ export default function App() {
   };
 
   const handleAuthSuccess = (authenticatedUser) => {
+    stopSpeech();
     setUser(authenticatedUser);
     syncConversations(authenticatedUser);
     setActiveId(null);
@@ -236,6 +266,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    stopSpeech();
     authStorage.logout();
     setUser(null);
     // Load guest conversations
@@ -243,6 +274,21 @@ export default function App() {
     setConversations(guestConvs);
     setActiveId(null);
     setMessages([]);
+  };
+
+  const handleSpeakMessage = (msgId, text) => {
+    speakMessage(msgId, text);
+  };
+
+  const handleStopSpeech = () => {
+    stopSpeech();
+  };
+
+  const cycleSpeechSpeed = () => {
+    const speeds = [1.0, 1.25, 1.5, 0.8];
+    const currentIdx = speeds.indexOf(speechState.rate);
+    const nextSpeed = speeds[(currentIdx + 1) % speeds.length];
+    setSpeechRate(nextSpeed);
   };
 
   return (
@@ -285,7 +331,77 @@ export default function App() {
 
         {error && <div className="error-banner">{error}</div>}
 
-        <ChatWindow user={user} messages={messages} streamingId={streamingId} onSuggestion={send} />
+        <ChatWindow
+          user={user}
+          messages={messages}
+          streamingId={streamingId}
+          onSuggestion={send}
+          speakingMessageId={speechState.isPlaying ? speechState.messageId : null}
+          onSpeak={handleSpeakMessage}
+          onStopSpeech={handleStopSpeech}
+        />
+
+        {/* Floating Audio Speech Controller Bar */}
+        {speechState.isPlaying && (
+          <div className="floating-audio-bar" role="region" aria-label="Audio playback controls">
+            <div className="audio-bar-info">
+              <span className="speaking-wave-bars">
+                <span className={`wave-bar bar-1 ${speechState.isPaused ? "is-paused" : ""}`} />
+                <span className={`wave-bar bar-2 ${speechState.isPaused ? "is-paused" : ""}`} />
+                <span className={`wave-bar bar-3 ${speechState.isPaused ? "is-paused" : ""}`} />
+              </span>
+              <span className="audio-bar-label">
+                {speechState.isPaused ? "Speech paused" : "Reading response aloud..."}
+              </span>
+            </div>
+
+            <div className="audio-bar-controls">
+              {/* Play / Pause */}
+              <button
+                type="button"
+                className="audio-control-btn"
+                onClick={speechState.isPaused ? resumeSpeech : pauseSpeech}
+                title={speechState.isPaused ? "Resume speech" : "Pause speech"}
+                aria-label={speechState.isPaused ? "Resume speech" : "Pause speech"}
+              >
+                {speechState.isPaused ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="4" width="4" height="16" rx="1" />
+                    <rect x="14" y="4" width="4" height="16" rx="1" />
+                  </svg>
+                )}
+              </button>
+
+              {/* Speed Rate Toggle */}
+              <button
+                type="button"
+                className="audio-control-btn audio-speed-btn"
+                onClick={cycleSpeechSpeed}
+                title={`Speed: ${speechState.rate}x (Click to change)`}
+                aria-label={`Speech rate ${speechState.rate}x`}
+              >
+                {speechState.rate}x
+              </button>
+
+              {/* Stop Audio */}
+              <button
+                type="button"
+                className="audio-control-btn audio-stop-btn"
+                onClick={handleStopSpeech}
+                title="Stop speech"
+                aria-label="Stop speech"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="5" y="5" width="14" height="14" rx="2" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
 
         <InputBar value={draft} onChange={setDraft} onSend={send} disabled={!!streamingId} />
       </main>

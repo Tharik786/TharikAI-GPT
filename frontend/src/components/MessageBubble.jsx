@@ -233,9 +233,20 @@ const MARKDOWN_COMPONENTS = {
   table: TableWrapper,
 };
 
-function MessageBubble({ role, content, attachments: propAttachments, isStreaming, user }) {
+function MessageBubble({
+  id,
+  role,
+  content,
+  attachments: propAttachments,
+  isStreaming,
+  user,
+  isSpeaking,
+  onSpeak,
+  onStopSpeech,
+}) {
   const isUser = role === "user";
   const userInitial = getUserInitial(user);
+  const [copied, setCopied] = useState(false);
 
   // Extract clean text and parsed attachments:
   // For assistant messages, skip expensive document parsing regexes during streaming
@@ -246,8 +257,27 @@ function MessageBubble({ role, content, attachments: propAttachments, isStreamin
     return parseMessageContent(content, propAttachments);
   }, [isUser, content, propAttachments]);
 
+  const handleCopyMessage = () => {
+    if (!cleanText) return;
+    navigator.clipboard.writeText(cleanText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  };
+
+  const handleToggleSpeak = () => {
+    if (isSpeaking) {
+      if (onStopSpeech) onStopSpeech();
+    } else {
+      if (onSpeak) onSpeak(id, cleanText);
+    }
+  };
+
   return (
-    <div className={`message-row ${isUser ? "message-row-user" : ""}`}>
+    <div
+      className={`message-row ${isUser ? "message-row-user" : "message-row-assistant"} ${
+        isSpeaking ? "is-message-speaking" : ""
+      }`}
+    >
       <div className={`avatar ${isUser ? "avatar-user" : "avatar-assistant"}`}>
         {isUser ? (
           userInitial
@@ -258,7 +288,7 @@ function MessageBubble({ role, content, attachments: propAttachments, isStreamin
       <div
         className={`message-bubble ${isUser ? "bubble-user" : "bubble-assistant"} ${
           isStreaming ? "is-streaming" : ""
-        }`}
+        } ${isSpeaking ? "bubble-speaking" : ""}`}
       >
         {/* Render document attachment cards above or below the message text */}
         {attachments && attachments.length > 0 && (
@@ -291,6 +321,94 @@ function MessageBubble({ role, content, attachments: propAttachments, isStreamin
           <span className="streaming-dot-indicator" aria-hidden="true">
             <span className="streaming-dot-pulse" />
           </span>
+        )}
+
+        {/* Message Actions (Read aloud TTS and Copy) */}
+        {!isStreaming && cleanText && (
+          <div className="message-actions-bar">
+            <button
+              type="button"
+              className={`msg-action-btn msg-tts-btn ${isSpeaking ? "is-active" : ""}`}
+              onClick={handleToggleSpeak}
+              title={isSpeaking ? "Stop speaking" : "Read aloud (Text to Speech)"}
+              aria-label={isSpeaking ? "Stop speaking" : "Read aloud"}
+            >
+              {isSpeaking ? (
+                <>
+                  <span className="speaking-wave-bars">
+                    <span className="wave-bar bar-1" />
+                    <span className="wave-bar bar-2" />
+                    <span className="wave-bar bar-3" />
+                  </span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="5" y="5" width="14" height="14" rx="2" />
+                  </svg>
+                  <span className="msg-action-label">Stop</span>
+                </>
+              ) : (
+                <>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  </svg>
+                  <span className="msg-action-label">Read aloud</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              className="msg-action-btn msg-copy-btn"
+              onClick={handleCopyMessage}
+              title={copied ? "Copied to clipboard!" : "Copy message"}
+              aria-label="Copy message"
+            >
+              {copied ? (
+                <>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#10a37f"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  <span className="msg-action-label copied-text">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  <span className="msg-action-label">Copy</span>
+                </>
+              )}
+            </button>
+          </div>
         )}
       </div>
     </div>

@@ -68,7 +68,15 @@ function getGreetingHeading(user) {
   return `${timeGreeting}, what can I help with?`;
 }
 
-export default function ChatWindow({ user, messages, streamingId, onSuggestion }) {
+export default function ChatWindow({
+  user,
+  messages,
+  streamingId,
+  onSuggestion,
+  speakingMessageId,
+  onSpeak,
+  onStopSpeech,
+}) {
   const containerRef = useRef(null);
   const isAtBottomRef = useRef(true);
   const prevMessagesCountRef = useRef(messages.length);
@@ -134,11 +142,15 @@ export default function ChatWindow({ user, messages, streamingId, onSuggestion }
       {messages.map((m) => (
         <MessageBubble
           key={m.id}
+          id={m.id}
           role={m.role}
           content={m.content}
           attachments={m.attachments}
           isStreaming={m.id === streamingId}
           user={user}
+          isSpeaking={m.id === speakingMessageId}
+          onSpeak={onSpeak}
+          onStopSpeech={onStopSpeech}
         />
       ))}
       <div className="scroll-bottom-anchor" />

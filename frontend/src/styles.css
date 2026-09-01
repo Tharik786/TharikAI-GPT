@@ -1012,6 +1012,204 @@ textarea {
   }
 }
 
+/* ---------- Text-To-Speech & Message Action Styles ---------- */
+
+.message-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 6px;
+  user-select: none;
+}
+
+.msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.msg-action-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+.msg-tts-btn.is-active {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.msg-action-label.copied-text {
+  color: #10a37f;
+  font-weight: 600;
+}
+
+/* Sound wave equalizer animation */
+.speaking-wave-bars {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+
+.wave-bar {
+  display: inline-block;
+  width: 2.5px;
+  height: 10px;
+  border-radius: 1px;
+  background: currentColor;
+  animation: audioWaveBounce 1s ease-in-out infinite;
+}
+
+.wave-bar.bar-1 {
+  animation-delay: -0.32s;
+}
+
+.wave-bar.bar-2 {
+  animation-delay: -0.16s;
+}
+
+.wave-bar.bar-3 {
+  animation-delay: 0s;
+}
+
+.wave-bar.is-paused {
+  animation-play-state: paused;
+  opacity: 0.6;
+}
+
+@keyframes audioWaveBounce {
+  0%, 100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* Speaking message spotlight */
+.bubble-speaking {
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.bubble-speaking::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(to bottom, #3b82f6, #60a5fa);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.6);
+}
+
+/* Floating Audio Playback Controller Bar */
+.floating-audio-bar {
+  max-width: 720px;
+  width: calc(100% - 32px);
+  margin: 0 auto 8px;
+  padding: 8px 16px;
+  background: rgba(22, 24, 27, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 24px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45), 0 0 20px rgba(59, 130, 246, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  animation: slideAudioBar 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 50;
+  flex-shrink: 0;
+}
+
+@keyframes slideAudioBar {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.audio-bar-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #93c5fd;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.audio-bar-label {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.audio-bar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audio-control-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.audio-control-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  transform: scale(1.05);
+}
+
+.audio-speed-btn {
+  width: auto;
+  min-width: 38px;
+  padding: 0 8px;
+  border-radius: 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+.audio-speed-btn:hover {
+  background: rgba(59, 130, 246, 0.22);
+}
+
+.audio-stop-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
 /* ---------- input bar ---------- */
 
 .input-bar {
