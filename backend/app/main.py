@@ -96,8 +96,14 @@ class MessagesBody(BaseModel):
     updatedAt: int
 
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "TharikAI API is running", "docs": "/docs"}
+
+
 @app.get("/api/health")
 async def health():
+
     db_status = "disconnected"
     try:
         con = get_db_connection()
