@@ -1,5 +1,5 @@
 const RAW_URL = import.meta.env.VITE_API_URL;
-const BASE_URL = (RAW_URL ? RAW_URL.trim().replace(/\/+$/, "") : "") || "http://localhost:8000";
+const BASE_URL = (RAW_URL ? RAW_URL.trim().replace(/\/+$/, "") : "") || "https://tharikai-gpt.onrender.com";
 
 /**
  * Streams an assistant reply for the given message history via SSE.
