@@ -19,9 +19,11 @@ TIME_SENSITIVE_PATTERNS = [
     r"\b(weather|temperature|forecast|score|match|live)\b",
     r"\b(stock|price|crypto|bitcoin|eth|market|rate)\b",
     r"\b(who is the current|who won|election|olympics|championship)\b",
-    r"\b(release date|schedule|what time is|when is)\b",
+    r"\b(release date|schedule|what time|what's the time|whats the time|time now|when is|what date)\b",
+    r"\b(right now|current time|clock|timezone)\b",
     r"\b(2025|2026|2027)\b",
 ]
+
 
 COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in TIME_SENSITIVE_PATTERNS]
 

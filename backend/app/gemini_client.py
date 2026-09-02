@@ -11,11 +11,20 @@ backend_dir = Path(__file__).resolve().parent.parent
 load_dotenv(backend_dir / ".env")
 load_dotenv()
 
-SYSTEM_PROMPT = (
-    "You are a helpful, friendly AI assistant. Format answers with Markdown "
-    "(headings, lists, and fenced code blocks with a language tag) whenever "
-    "that improves readability."
-)
+import datetime
+
+
+def get_system_prompt() -> str:
+    now_str = datetime.datetime.now().strftime("%A, %B %d, %Y, %H:%M:%S UTC")
+    return (
+        f"You are a helpful, friendly AI assistant. Format answers with Markdown "
+        f"(headings, lists, and fenced code blocks with a language tag) whenever "
+        f"that improves readability. Current Date and Time: {now_str}."
+    )
+
+
+SYSTEM_PROMPT = get_system_prompt()
+
 
 
 class GeminiError(Exception):
@@ -151,9 +160,10 @@ async def stream_chat_completion(
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     generic_key = os.getenv("AI_API_KEY", "").strip()
 
-    system_prompt = SYSTEM_PROMPT
+    system_prompt = get_system_prompt()
     if web_search_context:
-        system_prompt = f"{SYSTEM_PROMPT}\n\n{web_search_context}"
+        system_prompt = f"{system_prompt}\n\n{web_search_context}"
+
 
     # Determine key and provider
     if openrouter_key:
