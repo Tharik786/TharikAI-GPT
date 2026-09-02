@@ -22,7 +22,9 @@ class GeminiError(Exception):
     pass
 
 
-async def _stream_openrouter(api_key: str, messages: list[dict]) -> AsyncGenerator[str, None]:
+async def _stream_openrouter(
+    api_key: str, messages: list[dict], system_prompt: str = SYSTEM_PROMPT
+) -> AsyncGenerator[str, None]:
     model = os.getenv("OPENROUTER_MODEL") or os.getenv("AI_MODEL", "openrouter/auto")
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -32,7 +34,7 @@ async def _stream_openrouter(api_key: str, messages: list[dict]) -> AsyncGenerat
         "X-Title": "TharikAI",
     }
 
-    contents = [{"role": "system", "content": SYSTEM_PROMPT}]
+    contents = [{"role": "system", "content": system_prompt}]
     for m in messages:
         role = "assistant" if m.get("role") in ("assistant", "model") else "user"
         contents.append({"role": role, "content": m.get("content", "")})
@@ -70,7 +72,9 @@ async def _stream_openrouter(api_key: str, messages: list[dict]) -> AsyncGenerat
                     continue
 
 
-async def _stream_gemini(api_key: str, messages: list[dict]) -> AsyncGenerator[str, None]:
+async def _stream_gemini(
+    api_key: str, messages: list[dict], system_prompt: str = SYSTEM_PROMPT
+) -> AsyncGenerator[str, None]:
     model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip() or "gemini-3.6-flash"
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -87,7 +91,7 @@ async def _stream_gemini(api_key: str, messages: list[dict]) -> AsyncGenerator[s
 
     payload = {
         "systemInstruction": {
-            "parts": [{"text": SYSTEM_PROMPT}]
+            "parts": [{"text": system_prompt}]
         },
         "contents": contents,
         "generationConfig": {
@@ -135,18 +139,25 @@ async def _stream_gemini(api_key: str, messages: list[dict]) -> AsyncGenerator[s
                     continue
 
 
-async def stream_chat_completion(messages: list[dict]) -> AsyncGenerator[str, None]:
+async def stream_chat_completion(
+    messages: list[dict], web_search_context: str = ""
+) -> AsyncGenerator[str, None]:
     """
     Yields text chunks as they arrive from OpenRouter or Google Gemini.
     Automatically detects the provider based on the key format or env vars.
+    If web_search_context is provided, grounds the AI with real-time web results.
     """
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     generic_key = os.getenv("AI_API_KEY", "").strip()
 
+    system_prompt = SYSTEM_PROMPT
+    if web_search_context:
+        system_prompt = f"{SYSTEM_PROMPT}\n\n{web_search_context}"
+
     # Determine key and provider
     if openrouter_key:
-        async for chunk in _stream_openrouter(openrouter_key, messages):
+        async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt):
             yield chunk
         return
 
@@ -158,8 +169,9 @@ async def stream_chat_completion(messages: list[dict]) -> AsyncGenerator[str, No
 
     # If the key has the OpenRouter prefix sk-or-, route to OpenRouter
     if key.startswith("sk-or-"):
-        async for chunk in _stream_openrouter(key, messages):
+        async for chunk in _stream_openrouter(key, messages, system_prompt=system_prompt):
             yield chunk
     else:
-        async for chunk in _stream_gemini(key, messages):
+        async for chunk in _stream_gemini(key, messages, system_prompt=system_prompt):
             yield chunk
+

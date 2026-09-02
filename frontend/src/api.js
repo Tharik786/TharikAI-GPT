@@ -7,13 +7,17 @@ const BASE_URL = (RAW_URL ? RAW_URL.trim().replace(/\/+$/, "") : "") || "https:/
  * The server is stateless -- it doesn't store anything, it just relays
  * to the LLM and streams tokens back.
  */
-export async function streamChat(messages, { onDelta, onDone, onError }) {
+export async function streamChat(
+  messages,
+  { onDelta, onDone, onError, onSources, onStatus },
+  { webSearch = false } = {}
+) {
   let res;
   try {
     res = await fetch(`${BASE_URL}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, web_search: !!webSearch }),
     });
   } catch {
     onError("Couldn't reach the server. Is the backend running?");
@@ -43,15 +47,37 @@ export async function streamChat(messages, { onDelta, onDone, onError }) {
       const payload = line.slice(5).trim();
       try {
         const parsed = JSON.parse(payload);
-        if (parsed.error) onError(parsed.error);
-        else if (parsed.delta) onDelta(parsed.delta);
-        else if (parsed.done) onDone();
+        if (parsed.error) {
+          onError(parsed.error);
+        } else if (parsed.type === "sources" && parsed.sources) {
+          if (onSources) onSources(parsed.sources);
+        } else if (parsed.type === "search_status") {
+          if (onStatus) onStatus(parsed.status);
+        } else if (parsed.delta) {
+          if (onDelta) onDelta(parsed.delta);
+        } else if (parsed.done) {
+          if (onDone) onDone();
+        }
       } catch {
         // ignore malformed keep-alive chunks
       }
     }
   }
 }
+
+export async function searchWeb(query, maxResults = 5) {
+  const res = await fetch(`${BASE_URL}/api/search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, max_results: maxResults }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || "Search failed.");
+  }
+  return data;
+}
+
 
 export async function registerUser(email, name, password_hash) {
   const res = await fetch(`${BASE_URL}/api/auth/register`, {

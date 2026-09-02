@@ -238,12 +238,16 @@ function MessageBubble({
   role,
   content,
   attachments: propAttachments,
+  sources,
+  searchStatus,
+  webSearch,
   isStreaming,
   user,
   isSpeaking,
   onSpeak,
   onStopSpeech,
 }) {
+
   const isUser = role === "user";
   const userInitial = getUserInitial(user);
   const [copied, setCopied] = useState(false);
@@ -290,6 +294,14 @@ function MessageBubble({
           isStreaming ? "is-streaming" : ""
         } ${isSpeaking ? "bubble-speaking" : ""}`}
       >
+        {/* Web Search tag on user message */}
+        {isUser && webSearch && (
+          <div className="user-web-search-tag">
+            <GlobeMiniIcon />
+            <span>Web Search</span>
+          </div>
+        )}
+
         {/* Render document attachment cards above or below the message text */}
         {attachments && attachments.length > 0 && (
           <div className="message-attachments-container">
@@ -297,6 +309,20 @@ function MessageBubble({
               <DocumentAttachmentCard key={idx} attachment={att} />
             ))}
           </div>
+        )}
+
+        {/* Real-time search status indicator while querying web */}
+        {!isUser && searchStatus && (
+          <div className="web-search-status-bar">
+            <GlobeMiniIcon />
+            <span className="search-status-text">{searchStatus}</span>
+            <span className="search-status-pulse" />
+          </div>
+        )}
+
+        {/* Real-time Web Sources Widget */}
+        {!isUser && sources && sources.length > 0 && (
+          <WebSourcesSection sources={sources} />
         )}
 
         {cleanText ? (
@@ -317,6 +343,7 @@ function MessageBubble({
             </div>
           )
         )}
+
         {isStreaming && cleanText && (
           <span className="streaming-dot-indicator" aria-hidden="true">
             <span className="streaming-dot-pulse" />
@@ -415,4 +442,112 @@ function MessageBubble({
   );
 }
 
+function WebSourcesSection({ sources }) {
+
+  const [expanded, setExpanded] = useState(false);
+  if (!sources || sources.length === 0) return null;
+
+  return (
+    <div className="web-sources-section">
+      <div
+        className="web-sources-header"
+        onClick={() => setExpanded(!expanded)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded(!expanded);
+          }
+        }}
+      >
+        <div className="web-sources-title">
+          <GlobeMiniIcon />
+          <span>{sources.length} Web Sources</span>
+        </div>
+        <button
+          type="button"
+          className="web-sources-toggle-btn"
+          aria-label={expanded ? "Collapse sources" : "Expand sources"}
+        >
+          <span>{expanded ? "Show less" : "Show all"}</span>
+          <ChevronIcon rotated={expanded} />
+        </button>
+      </div>
+
+      <div className={`web-sources-grid ${expanded ? "is-expanded" : ""}`}>
+        {(expanded ? sources : sources.slice(0, 3)).map((source, idx) => (
+          <a
+            key={idx}
+            href={source.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="web-source-card"
+            title={`${source.title}\n${source.url}`}
+          >
+            <div className="source-card-top">
+              <img
+                src={`https://www.google.com/s2/favicons?domain=${source.domain || source.url}&sz=32`}
+                alt=""
+                className="source-favicon"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+              <span className="source-domain">{source.domain || "Source"}</span>
+            </div>
+            <div className="source-card-title">{source.title}</div>
+            {source.content && (
+              <div className="source-card-snippet">
+                {source.content.slice(0, 95)}...
+              </div>
+            )}
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GlobeMiniIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ rotated }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{
+        transform: rotated ? "rotate(180deg)" : "rotate(0deg)",
+        transition: "transform 0.2s ease",
+      }}
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
 export default React.memo(MessageBubble);
+

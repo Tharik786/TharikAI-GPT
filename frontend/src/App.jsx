@@ -30,6 +30,7 @@ export default function App() {
   const [streamingId, setStreamingId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [error, setError] = useState(null);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
 
   // Text-To-Speech state
   const [speechState, setSpeechState] = useState({
@@ -117,11 +118,13 @@ export default function App() {
 
     const text = typeof payload === "string" ? payload : payload?.text || "";
     const attachments = typeof payload === "object" && Array.isArray(payload?.attachments) ? payload.attachments : [];
+    const webSearch = typeof payload === "object" && payload?.webSearch !== undefined ? payload.webSearch : webSearchEnabled;
 
     const userMsg = {
       id: `local-${Date.now()}`,
       role: "user",
       content: text,
+      webSearch,
       attachments: attachments.map((a) => ({
         name: a.name,
         size: a.size,
@@ -132,7 +135,13 @@ export default function App() {
         textContent: a.textContent,
       })),
     };
-    const assistantMsg = { id: `stream-${Date.now()}`, role: "assistant", content: "" };
+    const assistantMsg = {
+      id: `stream-${Date.now()}`,
+      role: "assistant",
+      content: "",
+      sources: [],
+      searchStatus: "",
+    };
 
     let working = [...messages, userMsg, assistantMsg];
     setMessages(working);
@@ -185,55 +194,73 @@ export default function App() {
       setMessages(working);
     };
 
-    await streamChat(historyForLLM, {
-      onDelta: (delta) => {
-        pendingDeltas += delta;
-        if (!rafId) {
-          rafId = requestAnimationFrame(() => {
+    await streamChat(
+      historyForLLM,
+      {
+        onStatus: (status) => {
+          working = working.map((m) =>
+            m.id === assistantMsg.id ? { ...m, searchStatus: status } : m
+          );
+          setMessages(working);
+        },
+        onSources: (sources) => {
+          working = working.map((m) =>
+            m.id === assistantMsg.id ? { ...m, sources, searchStatus: "" } : m
+          );
+          setMessages(working);
+        },
+        onDelta: (delta) => {
+          pendingDeltas += delta;
+          if (!rafId) {
+            rafId = requestAnimationFrame(() => {
+              rafId = null;
+              flushDeltas();
+            });
+          }
+        },
+        onDone: () => {
+
+          if (rafId) {
+            cancelAnimationFrame(rafId);
             rafId = null;
-            flushDeltas();
-          });
-        }
-      },
-      onDone: () => {
-        if (rafId) {
-          cancelAnimationFrame(rafId);
-          rafId = null;
-        }
-        flushDeltas();
-        setStreamingId(null);
-        // Persist the finished exchange
-        storage.setMessages(convId, working);
-        setConversations(storage.list());
-        if (user?.email) {
-          const updatedConv = storage.get(convId);
-          if (updatedConv) {
-            syncConversationRemote(updatedConv, user.email);
-            syncMessagesRemote(convId, working, updatedConv.updatedAt);
           }
-        }
-      },
-      onError: (msg) => {
-        if (rafId) {
-          cancelAnimationFrame(rafId);
-          rafId = null;
-        }
-        flushDeltas();
-        setError(msg);
-        setStreamingId(null);
-        // Still persist whatever was said
-        storage.setMessages(convId, working);
-        setConversations(storage.list());
-        if (user?.email) {
-          const updatedConv = storage.get(convId);
-          if (updatedConv) {
-            syncConversationRemote(updatedConv, user.email);
-            syncMessagesRemote(convId, working, updatedConv.updatedAt);
+          flushDeltas();
+          setStreamingId(null);
+          // Persist the finished exchange
+          storage.setMessages(convId, working);
+          setConversations(storage.list());
+          if (user?.email) {
+            const updatedConv = storage.get(convId);
+            if (updatedConv) {
+              syncConversationRemote(updatedConv, user.email);
+              syncMessagesRemote(convId, working, updatedConv.updatedAt);
+            }
           }
-        }
+        },
+        onError: (msg) => {
+          if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+          flushDeltas();
+          setError(msg);
+          setStreamingId(null);
+          // Still persist whatever was said
+          storage.setMessages(convId, working);
+          setConversations(storage.list());
+          if (user?.email) {
+            const updatedConv = storage.get(convId);
+            if (updatedConv) {
+              syncConversationRemote(updatedConv, user.email);
+              syncMessagesRemote(convId, working, updatedConv.updatedAt);
+            }
+          }
+        },
       },
-    });
+      { webSearch }
+    );
   };
+
 
   const handleRename = (id, title) => {
     storage.rename(id, title);
@@ -403,7 +430,14 @@ export default function App() {
           </div>
         )}
 
-        <InputBar value={draft} onChange={setDraft} onSend={send} disabled={!!streamingId} />
+        <InputBar
+          value={draft}
+          onChange={setDraft}
+          onSend={send}
+          disabled={!!streamingId}
+          webSearchEnabled={webSearchEnabled}
+          onToggleWebSearch={setWebSearchEnabled}
+        />
       </main>
 
       <AuthModal

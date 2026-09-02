@@ -3,6 +3,12 @@ import MessageBubble from "./MessageBubble.jsx";
 
 const SUGGESTION_CARDS = [
   {
+    icon: "🌐",
+    title: "Live Web Search",
+    desc: "Current news & real-time info",
+    prompt: "What are the latest major news headlines today?",
+  },
+  {
     icon: "✨",
     title: "Create something",
     desc: "Ideas, writing & designs",
@@ -19,12 +25,6 @@ const SUGGESTION_CARDS = [
     title: "Write code",
     desc: "Build & debug code",
     prompt: "Help me write clean, efficient code and explain it.",
-  },
-  {
-    icon: "📚",
-    title: "Learn",
-    desc: "Explore any topic",
-    prompt: "Teach me something interesting step by step in simple terms.",
   },
 ];
 
@@ -146,6 +146,9 @@ export default function ChatWindow({
           role={m.role}
           content={m.content}
           attachments={m.attachments}
+          sources={m.sources}
+          searchStatus={m.searchStatus}
+          webSearch={m.webSearch}
           isStreaming={m.id === streamingId}
           user={user}
           isSpeaking={m.id === speakingMessageId}

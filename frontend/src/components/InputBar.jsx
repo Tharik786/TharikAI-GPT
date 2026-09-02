@@ -49,10 +49,28 @@ function mergeTranscriptChunks(chunks) {
   return finalStr;
 }
 
-export default function InputBar({ value, onChange, onSend, disabled }) {
+export default function InputBar({
+  value,
+  onChange,
+  onSend,
+  disabled,
+  webSearchEnabled,
+  onToggleWebSearch,
+}) {
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const menuRef = useRef(null);
+
+  const [localWebSearch, setLocalWebSearch] = useState(false);
+  const isWebSearchOn = webSearchEnabled !== undefined ? webSearchEnabled : localWebSearch;
+
+  const toggleWebSearch = () => {
+    if (onToggleWebSearch) {
+      onToggleWebSearch(!isWebSearchOn);
+    } else {
+      setLocalWebSearch((prev) => !prev);
+    }
+  };
 
   const [attachments, setAttachments] = useState([]);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
@@ -337,6 +355,7 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
     onSend({
       text: value.trim(),
       attachments: [...attachments],
+      webSearch: isWebSearchOn,
     });
 
     setAttachments([]);
@@ -379,6 +398,19 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
           title="Add photos & files"
         >
           <PlusCircleIcon />
+        </button>
+
+        {/* Web Search Toggle button */}
+        <button
+          type="button"
+          className={`web-search-btn ${isWebSearchOn ? "active" : ""}`}
+          onClick={toggleWebSearch}
+          aria-label={isWebSearchOn ? "Disable web search" : "Enable real-time web search"}
+          title={isWebSearchOn ? "Web search: ON (Real-time data enabled)" : "Search the web (Tavily real-time data)"}
+        >
+          <GlobeIcon />
+          <span className="web-search-label">Search</span>
+          {isWebSearchOn && <span className="web-search-indicator-dot" />}
         </button>
 
         <div className="input-field-wrapper">
@@ -435,12 +467,19 @@ export default function InputBar({ value, onChange, onSend, disabled }) {
           <textarea
             ref={textareaRef}
             rows={1}
-            placeholder={isListening ? "Listening..." : "Message TharikAI..."}
+            placeholder={
+              isListening
+                ? "Listening..."
+                : isWebSearchOn
+                ? "Search the web or ask a question..."
+                : "Message TharikAI..."
+            }
             value={value}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
           />
         </div>
+
 
         {/* Voice-to-text Microphone Button */}
         <button
@@ -531,3 +570,23 @@ function SendIcon() {
     </svg>
   );
 }
+
+function GlobeIcon() {
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  );
+}
+

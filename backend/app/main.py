@@ -22,6 +22,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.gemini_client import stream_chat_completion, GeminiError
+from app.tavily_client import search_tavily, format_search_context, should_auto_search
 from app.db import (
     init_db,
     get_db_connection,
@@ -70,6 +71,12 @@ class ChatMessage(BaseModel):
 
 class ChatBody(BaseModel):
     messages: list[ChatMessage]
+    web_search: bool | None = False
+
+
+class SearchBody(BaseModel):
+    query: str
+    max_results: int | None = 5
 
 
 class RegisterBody(BaseModel):
@@ -223,6 +230,17 @@ async def extract_document(file: UploadFile = File(...)):
     }
 
 
+@app.post("/api/search")
+async def search_endpoint(body: SearchBody):
+    """
+    Direct web search endpoint powered by Tavily Search API.
+    """
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    data = await search_tavily(body.query.strip(), max_results=body.max_results or 5)
+    return data
+
+
 @app.post("/api/chat")
 async def chat(body: ChatBody):
     """
@@ -230,15 +248,44 @@ async def chat(body: ChatBody):
     messages) on every request, and this endpoint streams back the next
     assistant reply. Nothing is stored on the server -- the browser is
     the only place history lives (see frontend/src/storage.js).
+    Supports real-time web search integration via Tavily.
     """
     if not body.messages:
         raise HTTPException(status_code=400, detail="messages cannot be empty")
 
     llm_messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
+    # Find the latest user query
+    last_user_msg = next((m.content for m in reversed(body.messages) if m.role == "user"), "")
+    # Clean up file extraction text tags from query for web search
+    clean_search_query = last_user_msg.split("--- Document Attached:")[0].split("[Attached image:")[0].strip()
+
+    perform_search = False
+    if body.web_search:
+        perform_search = True
+    elif should_auto_search(clean_search_query):
+        perform_search = True
+
     async def event_stream():
+        search_context = ""
+        if perform_search and clean_search_query:
+            try:
+                # Notify client that web search has initiated
+                yield f"data: {json.dumps({'type': 'search_status', 'status': f'Searching the web for \"{clean_search_query[:50]}\"...'})}\n\n"
+                search_data = await search_tavily(clean_search_query, max_results=5)
+                if search_data.get("success") and search_data.get("results"):
+                    # Emit verified web sources to the client
+                    yield f"data: {json.dumps({'type': 'sources', 'sources': search_data['results']})}\n\n"
+                    search_context = format_search_context(search_data)
+                elif search_data.get("error"):
+                    # Reset status if search encountered an error
+                    yield f"data: {json.dumps({'type': 'search_status', 'status': ''})}\n\n"
+            except Exception as e:
+                # Never let web search failure block normal chat streaming
+                print(f"Web search non-blocking error: {e}")
+
         try:
-            async for chunk in stream_chat_completion(llm_messages):
+            async for chunk in stream_chat_completion(llm_messages, web_search_context=search_context):
                 yield f"data: {json.dumps({'delta': chunk})}\n\n"
         except GeminiError as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
