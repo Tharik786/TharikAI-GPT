@@ -54,23 +54,11 @@ export default function InputBar({
   onChange,
   onSend,
   disabled,
-  webSearchEnabled,
-  onToggleWebSearch,
+  onOpenVoiceMode,
 }) {
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const menuRef = useRef(null);
-
-  const [localWebSearch, setLocalWebSearch] = useState(false);
-  const isWebSearchOn = webSearchEnabled !== undefined ? webSearchEnabled : localWebSearch;
-
-  const toggleWebSearch = () => {
-    if (onToggleWebSearch) {
-      onToggleWebSearch(!isWebSearchOn);
-    } else {
-      setLocalWebSearch((prev) => !prev);
-    }
-  };
 
   const [attachments, setAttachments] = useState([]);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
@@ -355,7 +343,6 @@ export default function InputBar({
     onSend({
       text: value.trim(),
       attachments: [...attachments],
-      webSearch: isWebSearchOn,
     });
 
     setAttachments([]);
@@ -398,19 +385,6 @@ export default function InputBar({
           title="Add photos & files"
         >
           <PlusCircleIcon />
-        </button>
-
-        {/* Web Search Toggle button */}
-        <button
-          type="button"
-          className={`web-search-btn ${isWebSearchOn ? "active" : ""}`}
-          onClick={toggleWebSearch}
-          aria-label={isWebSearchOn ? "Disable web search" : "Enable real-time web search"}
-          title={isWebSearchOn ? "Web search: ON (Real-time data enabled)" : "Search the web (Tavily real-time data)"}
-        >
-          <GlobeIcon />
-          <span className="web-search-label">Search</span>
-          {isWebSearchOn && <span className="web-search-indicator-dot" />}
         </button>
 
         <div className="input-field-wrapper">
@@ -470,8 +444,6 @@ export default function InputBar({
             placeholder={
               isListening
                 ? "Listening..."
-                : isWebSearchOn
-                ? "Search the web or ask a question..."
                 : "Message TharikAI..."
             }
             value={value}
@@ -480,6 +452,19 @@ export default function InputBar({
           />
         </div>
 
+
+        {/* Live Voice-to-Voice Mode Button (ChatGPT style) */}
+        {onOpenVoiceMode && (
+          <button
+            type="button"
+            className="input-voice-mode-btn"
+            onClick={onOpenVoiceMode}
+            aria-label="Start Voice Mode"
+            title="Start live voice conversation (Voice Agent)"
+          >
+            <HeadphonesIcon />
+          </button>
+        )}
 
         {/* Voice-to-text Microphone Button */}
         <button
@@ -571,21 +556,20 @@ function SendIcon() {
   );
 }
 
-function GlobeIcon() {
+function HeadphonesIcon() {
   return (
     <svg
-      width="17"
-      height="17"
+      width="18"
+      height="18"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.9"
+      strokeWidth="2.1"
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <circle cx="12" cy="12" r="10" />
-      <line x1="2" y1="12" x2="22" y2="12" />
-      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+      <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+      <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
     </svg>
   );
 }

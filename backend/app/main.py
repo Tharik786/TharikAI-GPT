@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from app.gemini_client import stream_chat_completion, GeminiError
 from app.tavily_client import search_tavily, format_search_context, should_auto_search
+from app.image_client import detect_image_prompt, generate_image_url
 from app.db import (
     init_db,
     get_db_connection,
@@ -241,6 +242,28 @@ async def search_endpoint(body: SearchBody):
     return data
 
 
+class ImageBody(BaseModel):
+    prompt: str
+    width: int | None = 1024
+    height: int | None = 1024
+    model: str | None = "flux"
+
+
+@app.post("/api/image")
+async def image_endpoint(body: ImageBody):
+    """
+    Direct AI image generation endpoint powered by Pollinations Flux.
+    """
+    if not body.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    return generate_image_url(
+        body.prompt.strip(),
+        width=body.width or 1024,
+        height=body.height or 1024,
+        model=body.model or "flux",
+    )
+
+
 @app.post("/api/chat")
 async def chat(body: ChatBody):
     """
@@ -248,7 +271,7 @@ async def chat(body: ChatBody):
     messages) on every request, and this endpoint streams back the next
     assistant reply. Nothing is stored on the server -- the browser is
     the only place history lives (see frontend/src/storage.js).
-    Supports real-time web search integration via Tavily.
+    Supports real-time web search and AI image generation.
     """
     if not body.messages:
         raise HTTPException(status_code=400, detail="messages cannot be empty")
@@ -260,13 +283,29 @@ async def chat(body: ChatBody):
     # Clean up file extraction text tags from query for web search
     clean_search_query = last_user_msg.split("--- Document Attached:")[0].split("[Attached image:")[0].strip()
 
-    perform_search = False
-    if body.web_search:
-        perform_search = True
-    elif should_auto_search(clean_search_query):
-        perform_search = True
+    # Detect if the user is asking to generate an AI image
+    image_prompt = detect_image_prompt(clean_search_query)
+
+    # Only perform web search for time-sensitive / real-time queries for immediate AI response speed
+    perform_search = should_auto_search(clean_search_query) if not image_prompt else False
 
     async def event_stream():
+        # Handle Image Generation intent
+        if image_prompt:
+            try:
+                yield f"data: {json.dumps({'type': 'search_status', 'status': f'Generating AI image for \"{image_prompt[:40]}\"...'})}\n\n"
+                img_data = generate_image_url(image_prompt)
+                intro = f"Here is the generated image of **{image_prompt}**:\n\n"
+                for word in intro.split(" "):
+                    yield f"data: {json.dumps({'delta': word + ' '})}\n\n"
+                img_markdown = f"![{image_prompt}]({img_data['image_url']})\n\n"
+                yield f"data: {json.dumps({'delta': img_markdown})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                return
+            except Exception as e:
+                yield f"data: {json.dumps({'error': f'Image generation error: {str(e)}'})}\n\n"
+                return
+
         search_context = ""
         if perform_search and clean_search_query:
             try:

@@ -14,16 +14,17 @@ TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
 # Common keywords/patterns indicating time-sensitive or live real-time queries
 TIME_SENSITIVE_PATTERNS = [
-    r"\b(today|tonight|yesterday|tomorrow|this week|this month|this year)\b",
-    r"\b(latest|current|currently|recent|recently|breaking|news|updates?)\b",
-    r"\b(weather|temperature|forecast|score|match|live)\b",
-    r"\b(stock|price|crypto|bitcoin|eth|market|rate)\b",
-    r"\b(who is the current|who won|election|olympics|championship)\b",
-    r"\b(release date|schedule|what time|what's the time|whats the time|time now|when is|what date)\b",
-    r"\b(right now|current time|clock|timezone)\b",
-    r"\b(2025|2026|2027)\b",
+    r"\b(today|tonight|yesterday|tomorrow|this week|this month|this year|now|right now)\b",
+    r"\b(latest|current|currently|recent|recently|breaking|news|updates?|newest|headlines?)\b",
+    r"\b(weather|temperature|forecast|rain|climate|humidity)\b",
+    r"\b(stock|price|prices|shares?|crypto|bitcoin|btc|ethereum|eth|market|rate|usd|inr|eur|currency|valuation|market cap)\b",
+    r"\b(who is|who won|who is the|who are|election|olympics|championship|tournament|league|ipl|fifa|world cup)\b",
+    r"\b(score|scores|live score|match|vs\b|game score)\b",
+    r"\b(release date|launch date|schedule|what time|whats the time|what date|when is|when will)\b",
+    r"\b(ceo of|president of|prime minister of|founder of|net worth)\b",
+    r"\b(search for|lookup|look up|find out|what happened in|tell me the news)\b",
+    r"\b(2024|2025|2026|2027)\b",
 ]
-
 
 COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in TIME_SENSITIVE_PATTERNS]
 
@@ -60,13 +61,13 @@ async def search_tavily(query: str, max_results: int = 5) -> dict:
         "api_key": api_key,
         "query": clean_query,
         "search_depth": "basic",
-        "include_answer": True,
+        "include_answer": False,
         "include_images": False,
-        "max_results": min(max_results, 8),
+        "max_results": min(max_results, 3),
     }
 
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
+        async with httpx.AsyncClient(timeout=4.0) as client:
             response = await client.post(TAVILY_SEARCH_URL, json=payload)
             if response.status_code != 200:
                 return {

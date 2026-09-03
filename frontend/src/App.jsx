@@ -4,6 +4,7 @@ import Header from "./components/Header.jsx";
 import ChatWindow from "./components/ChatWindow.jsx";
 import InputBar from "./components/InputBar.jsx";
 import AuthModal from "./components/AuthModal.jsx";
+import VoiceModeModal from "./components/VoiceModeModal.jsx";
 import {
   streamChat,
   fetchRemoteConversations,
@@ -30,7 +31,9 @@ export default function App() {
   const [streamingId, setStreamingId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [error, setError] = useState(null);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState("login");
+  const [voiceModeOpen, setVoiceModeOpen] = useState(false);
 
   // Text-To-Speech state
   const [speechState, setSpeechState] = useState({
@@ -49,10 +52,6 @@ export default function App() {
       stopSpeech();
     };
   }, []);
-
-  // Auth modal state
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState("signup");
 
   // Load current user and sync conversation list with Supabase
   useEffect(() => {
@@ -118,7 +117,7 @@ export default function App() {
 
     const text = typeof payload === "string" ? payload : payload?.text || "";
     const attachments = typeof payload === "object" && Array.isArray(payload?.attachments) ? payload.attachments : [];
-    const webSearch = typeof payload === "object" && payload?.webSearch !== undefined ? payload.webSearch : webSearchEnabled;
+    const webSearch = typeof payload === "object" && payload?.webSearch !== undefined ? payload.webSearch : true;
 
     const userMsg = {
       id: `local-${Date.now()}`,
@@ -211,6 +210,12 @@ export default function App() {
         },
         onDelta: (delta) => {
           pendingDeltas += delta;
+          // Immediately flush the first token so the AI responds with 0ms visual delay
+          const currentAssistantMsg = working.find((m) => m.id === assistantMsg.id);
+          if (!currentAssistantMsg || !currentAssistantMsg.content) {
+            flushDeltas();
+            return;
+          }
           if (!rafId) {
             rafId = requestAnimationFrame(() => {
               rafId = null;
@@ -318,6 +323,197 @@ export default function App() {
     setSpeechRate(nextSpeed);
   };
 
+  const handleVoiceMessageSend = async (voiceText, { onDelta, onDone, onError }) => {
+    setError(null);
+    const convId = ensureConversation();
+
+    const userMsg = {
+      id: `local-${Date.now()}`,
+      role: "user",
+      content: voiceText,
+      webSearch: true,
+      attachments: [],
+    };
+    const assistantMsg = {
+      id: `stream-${Date.now()}`,
+      role: "assistant",
+      content: "",
+      sources: [],
+      searchStatus: "",
+    };
+
+    let working = [...messages, userMsg, assistantMsg];
+    setMessages(working);
+    setStreamingId(assistantMsg.id);
+
+    const conv = storage.get(convId);
+    if (conv && conv.title === "New chat") {
+      const title = voiceText.slice(0, 48) + (voiceText.length > 48 ? "..." : "");
+      storage.rename(convId, title);
+    }
+
+    const historyForLLM = [...messages, { role: "user", content: voiceText }].map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    await streamChat(
+      historyForLLM,
+      {
+        onStatus: (status) => {
+          working = working.map((m) =>
+            m.id === assistantMsg.id ? { ...m, searchStatus: status } : m
+          );
+          setMessages(working);
+        },
+        onSources: (sources) => {
+          working = working.map((m) =>
+            m.id === assistantMsg.id ? { ...m, sources, searchStatus: "" } : m
+          );
+          setMessages(working);
+        },
+        onDelta: (delta) => {
+          working = working.map((m) =>
+            m.id === assistantMsg.id ? { ...m, content: m.content + delta } : m
+          );
+          setMessages(working);
+          if (onDelta) onDelta(delta);
+        },
+        onDone: () => {
+          setStreamingId(null);
+          storage.setMessages(convId, working);
+          setConversations(storage.list());
+          if (user?.email) {
+            const updatedConv = storage.get(convId);
+            if (updatedConv) {
+              syncConversationRemote(updatedConv, user.email);
+              syncMessagesRemote(convId, working, updatedConv.updatedAt);
+            }
+          }
+          if (onDone) onDone();
+        },
+        onError: (msg) => {
+          setError(msg);
+          setStreamingId(null);
+          storage.setMessages(convId, working);
+          setConversations(storage.list());
+          if (onError) onError(msg);
+        },
+      },
+      { webSearch: true }
+    );
+  };
+
+  const handleRetry = async (assistantMessageId) => {
+    if (streamingId) return;
+    stopSpeech();
+    setError(null);
+
+    const convId = ensureConversation();
+    const msgIdx = messages.findIndex((m) => m.id === assistantMessageId);
+    if (msgIdx === -1) return;
+
+    const historyUpToAssistant = messages.slice(0, msgIdx);
+    const newAssistantMsg = {
+      id: `stream-${Date.now()}`,
+      role: "assistant",
+      content: "",
+      sources: [],
+      searchStatus: "",
+    };
+
+    let working = [...historyUpToAssistant, newAssistantMsg];
+    setMessages(working);
+    setStreamingId(newAssistantMsg.id);
+
+    const historyForLLM = historyUpToAssistant.map((m) => {
+      if (m.attachments && m.attachments.length > 0 && !m.content.includes("--- Document Attached:")) {
+        let full = m.content;
+        m.attachments.forEach((att) => {
+          if (att.textContent) {
+            full += `\n\n--- Document Attached: ${att.name} ---\n${att.textContent}\n--- End of Document ---`;
+          }
+        });
+        return { role: m.role, content: full };
+      }
+      return { role: m.role, content: m.content };
+    });
+
+    let pendingDeltas = "";
+    let rafId = null;
+
+    const flushDeltas = () => {
+      if (!pendingDeltas) return;
+      const textToAppend = pendingDeltas;
+      pendingDeltas = "";
+      working = working.map((m) =>
+        m.id === newAssistantMsg.id ? { ...m, content: m.content + textToAppend } : m
+      );
+      setMessages(working);
+    };
+
+    await streamChat(
+      historyForLLM,
+      {
+        onStatus: (status) => {
+          working = working.map((m) =>
+            m.id === newAssistantMsg.id ? { ...m, searchStatus: status } : m
+          );
+          setMessages(working);
+        },
+        onSources: (sources) => {
+          working = working.map((m) =>
+            m.id === newAssistantMsg.id ? { ...m, sources, searchStatus: "" } : m
+          );
+          setMessages(working);
+        },
+        onDelta: (delta) => {
+          pendingDeltas += delta;
+          const currentAssistantMsg = working.find((m) => m.id === newAssistantMsg.id);
+          if (!currentAssistantMsg || !currentAssistantMsg.content) {
+            flushDeltas();
+            return;
+          }
+          if (!rafId) {
+            rafId = requestAnimationFrame(() => {
+              rafId = null;
+              flushDeltas();
+            });
+          }
+        },
+        onDone: () => {
+          if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+          flushDeltas();
+          setStreamingId(null);
+          storage.setMessages(convId, working);
+          setConversations(storage.list());
+          if (user?.email) {
+            const updatedConv = storage.get(convId);
+            if (updatedConv) {
+              syncConversationRemote(updatedConv, user.email);
+              syncMessagesRemote(convId, working, updatedConv.updatedAt);
+            }
+          }
+        },
+        onError: (msg) => {
+          if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+          flushDeltas();
+          setError(msg);
+          setStreamingId(null);
+          storage.setMessages(convId, working);
+          setConversations(storage.list());
+        },
+      },
+      { webSearch: true }
+    );
+  };
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -354,6 +550,7 @@ export default function App() {
           }}
           onLogout={handleLogout}
           onToggleSidebar={() => setSidebarOpen(true)}
+          onOpenVoiceMode={() => setVoiceModeOpen(true)}
         />
 
         {error && <div className="error-banner">{error}</div>}
@@ -366,6 +563,7 @@ export default function App() {
           speakingMessageId={speechState.isPlaying ? speechState.messageId : null}
           onSpeak={handleSpeakMessage}
           onStopSpeech={handleStopSpeech}
+          onRetry={handleRetry}
         />
 
         {/* Floating Audio Speech Controller Bar */}
@@ -435,8 +633,7 @@ export default function App() {
           onChange={setDraft}
           onSend={send}
           disabled={!!streamingId}
-          webSearchEnabled={webSearchEnabled}
-          onToggleWebSearch={setWebSearchEnabled}
+          onOpenVoiceMode={() => setVoiceModeOpen(true)}
         />
       </main>
 
@@ -445,6 +642,13 @@ export default function App() {
         initialMode={authMode}
         onClose={() => setAuthModalOpen(false)}
         onAuthSuccess={handleAuthSuccess}
+      />
+
+      <VoiceModeModal
+        isOpen={voiceModeOpen}
+        onClose={() => setVoiceModeOpen(false)}
+        onSendMessage={handleVoiceMessageSend}
+        activeConversationTitle={storage.get(activeId)?.title || "Live Voice"}
       />
     </div>
   );

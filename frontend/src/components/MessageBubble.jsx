@@ -1,8 +1,18 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import {
+  exportToPdf,
+  exportTableToExcel,
+  exportTableToCsv,
+  exportToWordDoc,
+  exportToPptx,
+  exportToZip,
+  downloadTextFile,
+  extractCodeBlocksFromMarkdown,
+} from "../utils/exportService.js";
 
 function getUserInitial(user) {
   if (!user) return "U";
@@ -189,6 +199,7 @@ const DocumentAttachmentCard = React.memo(function DocumentAttachmentCard({ atta
 const CodeBlock = React.memo(function CodeBlock({ inline, className, children, ...rest }) {
   const [copied, setCopied] = useState(false);
   const match = /language-(\w+)/.exec(className || "");
+  const lang = match ? match[1] : "text";
   const codeText = String(children).replace(/\n$/, "");
 
   if (inline) {
@@ -205,14 +216,43 @@ const CodeBlock = React.memo(function CodeBlock({ inline, className, children, .
     setTimeout(() => setCopied(false), 1500);
   };
 
+  const handleDownloadCode = () => {
+    const extMap = {
+      python: "py", py: "py", javascript: "js", js: "js", jsx: "jsx",
+      typescript: "ts", ts: "ts", tsx: "tsx", html: "html", css: "css",
+      json: "json", sql: "sql", cpp: "cpp", c: "c", java: "java",
+      go: "go", rust: "rs", rs: "rs", php: "php", ruby: "rb",
+      sh: "sh", bash: "sh", markdown: "md", md: "md", text: "txt",
+    };
+    const ext = extMap[lang.toLowerCase()] || "txt";
+    downloadTextFile(`code_${Date.now().toString().slice(-4)}.${ext}`, codeText);
+  };
+
   return (
     <div className="code-block">
       <div className="code-block-header">
-        <span>{match ? match[1] : "text"}</span>
-        <button onClick={copy}>{copied ? "Copied!" : "Copy"}</button>
+        <span className="code-lang-tag">{lang}</span>
+        <div className="code-header-actions">
+          <button
+            type="button"
+            className="code-action-btn"
+            onClick={handleDownloadCode}
+            title={`Download code snippet as .${lang} file`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            <span>Download</span>
+          </button>
+          <button type="button" className="code-action-btn" onClick={copy}>
+            {copied ? "Copied!" : "Copy"}
+          </button>
+        </div>
       </div>
       <SyntaxHighlighter
-        language={match ? match[1] : "text"}
+        language={lang}
         style={oneDark}
         customStyle={{ margin: 0, borderRadius: "0 0 8px 8px", fontSize: "13px" }}
       >
@@ -222,15 +262,161 @@ const CodeBlock = React.memo(function CodeBlock({ inline, className, children, .
   );
 });
 
-const TableWrapper = ({ children, ...props }) => (
-  <div className="table-responsive-wrapper">
-    <table {...props}>{children}</table>
-  </div>
-);
+const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ...props }) {
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  const handleDownload = async (e) => {
+    e.stopPropagation();
+    try {
+      const response = await fetch(src);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(alt || "ai-image").slice(0, 30).replace(/[^a-zA-Z0-9_-]/g, "_")}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch {
+      window.open(src, "_blank");
+    }
+  };
+
+  return (
+    <div className="generated-image-card">
+      <div className="generated-image-container" onClick={() => setModalOpen(true)}>
+        {!loaded && !error && (
+          <div className="image-loading-skeleton">
+            <span className="image-skeleton-spinner" />
+            <span>Generating artwork with AI...</span>
+          </div>
+        )}
+        <img
+          src={src}
+          alt={alt || "AI Generated Artwork"}
+          className={`generated-ai-img ${loaded ? "is-loaded" : "is-loading"}`}
+          onLoad={() => setLoaded(true)}
+          onError={() => setError(true)}
+          {...props}
+        />
+        {loaded && (
+          <div className="image-overlay-actions">
+            <button
+              type="button"
+              className="image-action-btn"
+              onClick={handleDownload}
+              title="Download image"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              <span>Download</span>
+            </button>
+            <button
+              type="button"
+              className="image-action-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                window.open(src, "_blank");
+              }}
+              title="Open full size in new tab"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <polyline points="15 3 21 3 21 9" />
+                <line x1="10" y1="14" x2="21" y2="3" />
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {alt && (
+        <div className="generated-image-caption">
+          <span className="image-prompt-badge">AI Image</span>
+          <span className="image-prompt-text">{alt}</span>
+        </div>
+      )}
+
+      {/* Full screen Lightbox preview modal */}
+      {modalOpen && (
+        <div className="image-lightbox-overlay" onClick={() => setModalOpen(false)}>
+          <div className="image-lightbox-content" onClick={(e) => e.stopPropagation()}>
+            <img src={src} alt={alt} className="lightbox-img" />
+            <button
+              type="button"
+              className="lightbox-close-btn"
+              onClick={() => setModalOpen(false)}
+            >
+              &times;
+            </button>
+            <button
+              type="button"
+              className="lightbox-download-btn"
+              onClick={handleDownload}
+            >
+              Download Full HD Image
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+
+const TableWrapper = ({ children, ...props }) => {
+  const tableRef = useRef(null);
+  const [exported, setExported] = useState(false);
+
+  const handleExportExcel = () => {
+    if (!tableRef.current) return;
+    const rows = [];
+    const trList = tableRef.current.querySelectorAll("tr");
+    trList.forEach((tr) => {
+      const row = [];
+      const cells = tr.querySelectorAll("th, td");
+      cells.forEach((c) => row.push(c.innerText.trim()));
+      if (row.length > 0) rows.push(row);
+    });
+    exportTableToExcel(rows, `Dataset_${Date.now().toString().slice(-4)}.xlsx`);
+    setExported(true);
+    setTimeout(() => setExported(false), 2000);
+  };
+
+  return (
+    <div className="table-responsive-wrapper">
+      <div className="table-top-toolbar">
+        <span className="table-tag">Data Table</span>
+        <button
+          type="button"
+          className="table-export-btn"
+          onClick={handleExportExcel}
+          title="Export table as Microsoft Excel (.xlsx)"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="8" y1="13" x2="16" y2="13" />
+            <line x1="8" y1="17" x2="16" y2="17" />
+            <polyline points="10 9 9 9 8 9" />
+          </svg>
+          <span>{exported ? "Downloaded (.xlsx)!" : "Export Excel (.xlsx)"}</span>
+        </button>
+      </div>
+      <table ref={tableRef} {...props}>{children}</table>
+    </div>
+  );
+};
 
 const MARKDOWN_COMPONENTS = {
   code: CodeBlock,
   table: TableWrapper,
+  img: GeneratedImageCard,
 };
 
 function MessageBubble({
@@ -246,11 +432,15 @@ function MessageBubble({
   isSpeaking,
   onSpeak,
   onStopSpeech,
+  onRetry,
 }) {
 
   const isUser = role === "user";
   const userInitial = getUserInitial(user);
   const [copied, setCopied] = useState(false);
+  const [feedback, setFeedback] = useState(null); // 'up' | 'down' | null
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef(null);
 
   // Extract clean text and parsed attachments:
   // For assistant messages, skip expensive document parsing regexes during streaming
@@ -260,6 +450,24 @@ function MessageBubble({
     }
     return parseMessageContent(content, propAttachments);
   }, [isUser, content, propAttachments]);
+
+  // Extract code blocks for ZIP export
+  const extractedCodeBlocks = useMemo(() => {
+    if (!cleanText || isUser) return [];
+    return extractCodeBlocksFromMarkdown(cleanText);
+  }, [cleanText, isUser]);
+
+  // Close export dropdown when clicking outside
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const handleClickOutside = (e) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
+        setExportMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [exportMenuOpen]);
 
   const handleCopyMessage = () => {
     if (!cleanText) return;
@@ -435,6 +643,215 @@ function MessageBubble({
                 </>
               )}
             </button>
+
+            {/* Retry / Regenerate Response Button (Assistant message only) */}
+            {!isUser && onRetry && (
+              <button
+                type="button"
+                className="msg-action-btn msg-retry-btn"
+                onClick={() => onRetry(id)}
+                title="Regenerate response (Retry)"
+                aria-label="Retry message"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="1 4 1 10 7 10" />
+                  <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                </svg>
+                <span className="msg-action-label">Retry</span>
+              </button>
+            )}
+
+            {/* Export & Download Menu (PDF, Excel, Word, ZIP, Markdown) */}
+            <div className="msg-export-wrapper" ref={exportMenuRef}>
+              <button
+                type="button"
+                className={`msg-action-btn msg-export-btn ${exportMenuOpen ? "is-active" : ""}`}
+                onClick={() => setExportMenuOpen(!exportMenuOpen)}
+                title="Export / Download document or code"
+                aria-label="Export message"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span className="msg-action-label">Export</span>
+              </button>
+
+              {exportMenuOpen && (
+                <div className="msg-export-menu" role="menu">
+                  <button
+                    type="button"
+                    className="export-menu-item"
+                    onClick={() => {
+                      exportToPdf("TharikAI Assistant Document", cleanText, `Document_${id.slice(-4)}.pdf`);
+                      setExportMenuOpen(false);
+                    }}
+                  >
+                    <span className="export-item-icon pdf-icon">📄</span>
+                    <div className="export-item-details">
+                      <span className="export-item-title">Download as PDF (.pdf)</span>
+                      <span className="export-item-desc">Formatted styled PDF document</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="export-menu-item"
+                    onClick={() => {
+                      exportTableToExcel(cleanText, `Data_${id.slice(-4)}.xlsx`);
+                      setExportMenuOpen(false);
+                    }}
+                  >
+                    <span className="export-item-icon xlsx-icon">📊</span>
+                    <div className="export-item-details">
+                      <span className="export-item-title">Download as Excel (.xlsx)</span>
+                      <span className="export-item-desc">Structured spreadsheet workbook</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="export-menu-item"
+                    onClick={() => {
+                      exportToWordDoc("TharikAI Assistant Document", cleanText, `Document_${id.slice(-4)}.doc`);
+                      setExportMenuOpen(false);
+                    }}
+                  >
+                    <span className="export-item-icon doc-icon">📝</span>
+                    <div className="export-item-details">
+                      <span className="export-item-title">Download as Word (.docx / .doc)</span>
+                      <span className="export-item-desc">Microsoft Word document</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="export-menu-item"
+                    onClick={() => {
+                      exportToPptx("TharikAI Presentation", cleanText, `Presentation_${id.slice(-4)}.pptx`);
+                      setExportMenuOpen(false);
+                    }}
+                  >
+                    <span className="export-item-icon ppt-icon">📽️</span>
+                    <div className="export-item-details">
+                      <span className="export-item-title">Download as PowerPoint (.pptx)</span>
+                      <span className="export-item-desc">Multi-slide presentation deck</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="export-menu-item"
+                    onClick={() => {
+                      exportTableToCsv(cleanText, `Data_${id.slice(-4)}.csv`);
+                      setExportMenuOpen(false);
+                    }}
+                  >
+                    <span className="export-item-icon csv-icon">📑</span>
+                    <div className="export-item-details">
+                      <span className="export-item-title">Download as CSV (.csv)</span>
+                      <span className="export-item-desc">Comma-separated table values</span>
+                    </div>
+                  </button>
+
+                  {/* ZIP option if code blocks exist */}
+                  {extractedCodeBlocks.length > 0 && (
+                    <button
+                      type="button"
+                      className="export-menu-item"
+                      onClick={() => {
+                        exportToZip(extractedCodeBlocks, `Code_Files_${id.slice(-4)}.zip`);
+                        setExportMenuOpen(false);
+                      }}
+                    >
+                      <span className="export-item-icon zip-icon">📦</span>
+                      <div className="export-item-details">
+                        <span className="export-item-title">Download All Code as ZIP (.zip)</span>
+                        <span className="export-item-desc">Bundle {extractedCodeBlocks.length} code file{extractedCodeBlocks.length > 1 ? "s" : ""}</span>
+                      </div>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    className="export-menu-item"
+                    onClick={() => {
+                      downloadTextFile(`document_${id.slice(-4)}.txt`, cleanText, "text/plain;charset=utf-8;");
+                      setExportMenuOpen(false);
+                    }}
+                  >
+                    <span className="export-item-icon txt-icon">📄</span>
+                    <div className="export-item-details">
+                      <span className="export-item-title">Download as Plain Text (.txt)</span>
+                      <span className="export-item-desc">Clean plain text knowledge</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="export-menu-item"
+                    onClick={() => {
+                      downloadTextFile(`response_${id.slice(-4)}.md`, cleanText, "text/markdown");
+                      setExportMenuOpen(false);
+                    }}
+                  >
+                    <span className="export-item-icon md-icon">📝</span>
+                    <div className="export-item-details">
+                      <span className="export-item-title">Download as Markdown (.md)</span>
+                      <span className="export-item-desc">Raw markdown text file</span>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Thumbs Up / Down Feedback (Assistant message only) */}
+            {!isUser && (
+              <>
+                <button
+                  type="button"
+                  className={`msg-action-btn msg-feedback-btn ${feedback === "up" ? "is-liked" : ""}`}
+                  onClick={() => setFeedback(feedback === "up" ? null : "up")}
+                  title="Good response"
+                  aria-label="Like response"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill={feedback === "up" ? "#10a37f" : "none"} stroke={feedback === "up" ? "#10a37f" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                  </svg>
+                </button>
+
+                <button
+                  type="button"
+                  className={`msg-action-btn msg-feedback-btn ${feedback === "down" ? "is-disliked" : ""}`}
+                  onClick={() => setFeedback(feedback === "down" ? null : "down")}
+                  title="Bad response"
+                  aria-label="Dislike response"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill={feedback === "down" ? "#ef4444" : "none"} stroke={feedback === "down" ? "#ef4444" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+                  </svg>
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>

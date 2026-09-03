@@ -140,6 +140,14 @@ export function isSpeechSupported() {
 }
 
 /**
+ * Get all available voices in client browser
+ */
+export function getAvailableVoices() {
+  if (!isSpeechSupported()) return [];
+  return window.speechSynthesis.getVoices() || [];
+}
+
+/**
  * Find the best natural English voice available in the client browser
  */
 export function getBestVoice() {
@@ -266,6 +274,13 @@ export function speakMessage(messageId, text, options = {}) {
 
     if (chunkIndex >= chunks.length) {
       stopSpeech();
+      if (typeof options.onEnd === "function") {
+        try {
+          options.onEnd();
+        } catch (err) {
+          console.error("onEnd callback error:", err);
+        }
+      }
       return;
     }
 
@@ -296,6 +311,7 @@ export function speakMessage(messageId, text, options = {}) {
     } catch (err) {
       console.error("Speech synthesis failed:", err);
       stopSpeech();
+      if (typeof options.onEnd === "function") options.onEnd();
     }
   }
 

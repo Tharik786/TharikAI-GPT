@@ -8,6 +8,9 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["icon-192.png", "icon-512.png"],
+      workbox: {
+        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+      },
       manifest: {
         name: "TharikAI",
         short_name: "TharikAI",
@@ -23,6 +26,17 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom"],
+          pdf: ["pdfjs-dist"],
+          export: ["jspdf", "xlsx", "jszip", "pptxgenjs"],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
   },

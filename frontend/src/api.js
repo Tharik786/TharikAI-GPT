@@ -10,7 +10,7 @@ const BASE_URL = (RAW_URL ? RAW_URL.trim().replace(/\/+$/, "") : "") || "https:/
 export async function streamChat(
   messages,
   { onDelta, onDone, onError, onSources, onStatus },
-  { webSearch = false } = {}
+  { webSearch = true } = {}
 ) {
   let res;
   try {

@@ -3,6 +3,12 @@ import MessageBubble from "./MessageBubble.jsx";
 
 const SUGGESTION_CARDS = [
   {
+    icon: "🎨",
+    title: "Generate an image",
+    desc: "Create AI art & photos",
+    prompt: "Generate an image of a futuristic cyberpunk city with neon reflections in rain",
+  },
+  {
     icon: "🌐",
     title: "Live Web Search",
     desc: "Current news & real-time info",
@@ -13,12 +19,6 @@ const SUGGESTION_CARDS = [
     title: "Create something",
     desc: "Ideas, writing & designs",
     prompt: "Help me create something creative and innovative.",
-  },
-  {
-    icon: "🧩",
-    title: "Solve a problem",
-    desc: "Find smart solutions",
-    prompt: "Help me analyze and solve a problem step by step.",
   },
   {
     icon: "💻",
@@ -76,6 +76,7 @@ export default function ChatWindow({
   speakingMessageId,
   onSpeak,
   onStopSpeech,
+  onRetry,
 }) {
   const containerRef = useRef(null);
   const isAtBottomRef = useRef(true);
@@ -154,6 +155,7 @@ export default function ChatWindow({
           isSpeaking={m.id === speakingMessageId}
           onSpeak={onSpeak}
           onStopSpeech={onStopSpeech}
+          onRetry={onRetry}
         />
       ))}
       <div className="scroll-bottom-anchor" />
