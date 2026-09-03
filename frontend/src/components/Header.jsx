@@ -47,23 +47,6 @@ export default function Header({ user, onOpenLogin, onOpenSignup, onLogout, onTo
       </div>
 
       <div className="header-right">
-        {/* Voice Mode Launch Button */}
-        <button
-          type="button"
-          className="header-voice-mode-btn"
-          onClick={onOpenVoiceMode}
-          title="Start Live Voice Mode (Continuous Hands-Free Voice Agent)"
-          aria-label="Start Voice Mode"
-        >
-          <span className="voice-btn-bars">
-            <span className="vbar vb-1" />
-            <span className="vbar vb-2" />
-            <span className="vbar vb-3" />
-            <span className="vbar vb-4" />
-          </span>
-          <span className="voice-btn-text">Voice Mode</span>
-        </button>
-
         {user ? (
           <div className="user-profile-menu header-user-menu">
             <div

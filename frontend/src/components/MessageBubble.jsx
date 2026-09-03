@@ -502,14 +502,6 @@ function MessageBubble({
           isStreaming ? "is-streaming" : ""
         } ${isSpeaking ? "bubble-speaking" : ""}`}
       >
-        {/* Web Search tag on user message */}
-        {isUser && webSearch && (
-          <div className="user-web-search-tag">
-            <GlobeMiniIcon />
-            <span>Web Search</span>
-          </div>
-        )}
-
         {/* Render document attachment cards above or below the message text */}
         {attachments && attachments.length > 0 && (
           <div className="message-attachments-container">
@@ -558,14 +550,14 @@ function MessageBubble({
           </span>
         )}
 
-        {/* Message Actions (Read aloud TTS and Copy) */}
-        {!isStreaming && cleanText && (
+        {/* Message Actions - only on AI Assistant responses */}
+        {!isStreaming && cleanText && !isUser && (
           <div className="message-actions-bar">
             <button
               type="button"
               className={`msg-action-btn msg-tts-btn ${isSpeaking ? "is-active" : ""}`}
               onClick={handleToggleSpeak}
-              title={isSpeaking ? "Stop speaking" : "Read aloud (Text to Speech)"}
+              title={isSpeaking ? "Stop speaking" : "Read aloud"}
               aria-label={isSpeaking ? "Stop speaking" : "Read aloud"}
             >
               {isSpeaking ? (
@@ -578,26 +570,22 @@ function MessageBubble({
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                     <rect x="5" y="5" width="14" height="14" rx="2" />
                   </svg>
-                  <span className="msg-action-label">Stop</span>
                 </>
               ) : (
-                <>
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                  </svg>
-                  <span className="msg-action-label">Read aloud</span>
-                </>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                </svg>
               )}
             </button>
 
@@ -605,42 +593,36 @@ function MessageBubble({
               type="button"
               className="msg-action-btn msg-copy-btn"
               onClick={handleCopyMessage}
-              title={copied ? "Copied to clipboard!" : "Copy message"}
+              title={copied ? "Copied!" : "Copy response"}
               aria-label="Copy message"
             >
               {copied ? (
-                <>
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#10a37f"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                  <span className="msg-action-label copied-text">Copied!</span>
-                </>
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#10a37f"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
               ) : (
-                <>
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                  </svg>
-                  <span className="msg-action-label">Copy</span>
-                </>
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
               )}
             </button>
 
@@ -650,7 +632,7 @@ function MessageBubble({
                 type="button"
                 className="msg-action-btn msg-retry-btn"
                 onClick={() => onRetry(id)}
-                title="Regenerate response (Retry)"
+                title="Regenerate response"
                 aria-label="Retry message"
               >
                 <svg
@@ -666,191 +648,7 @@ function MessageBubble({
                   <polyline points="1 4 1 10 7 10" />
                   <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
                 </svg>
-                <span className="msg-action-label">Retry</span>
               </button>
-            )}
-
-            {/* Export & Download Menu (PDF, Excel, Word, ZIP, Markdown) */}
-            <div className="msg-export-wrapper" ref={exportMenuRef}>
-              <button
-                type="button"
-                className={`msg-action-btn msg-export-btn ${exportMenuOpen ? "is-active" : ""}`}
-                onClick={() => setExportMenuOpen(!exportMenuOpen)}
-                title="Export / Download document or code"
-                aria-label="Export message"
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                <span className="msg-action-label">Export</span>
-              </button>
-
-              {exportMenuOpen && (
-                <div className="msg-export-menu" role="menu">
-                  <button
-                    type="button"
-                    className="export-menu-item"
-                    onClick={() => {
-                      exportToPdf("TharikAI Assistant Document", cleanText, `Document_${id.slice(-4)}.pdf`);
-                      setExportMenuOpen(false);
-                    }}
-                  >
-                    <span className="export-item-icon pdf-icon">📄</span>
-                    <div className="export-item-details">
-                      <span className="export-item-title">Download as PDF (.pdf)</span>
-                      <span className="export-item-desc">Formatted styled PDF document</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="export-menu-item"
-                    onClick={() => {
-                      exportTableToExcel(cleanText, `Data_${id.slice(-4)}.xlsx`);
-                      setExportMenuOpen(false);
-                    }}
-                  >
-                    <span className="export-item-icon xlsx-icon">📊</span>
-                    <div className="export-item-details">
-                      <span className="export-item-title">Download as Excel (.xlsx)</span>
-                      <span className="export-item-desc">Structured spreadsheet workbook</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="export-menu-item"
-                    onClick={() => {
-                      exportToWordDoc("TharikAI Assistant Document", cleanText, `Document_${id.slice(-4)}.doc`);
-                      setExportMenuOpen(false);
-                    }}
-                  >
-                    <span className="export-item-icon doc-icon">📝</span>
-                    <div className="export-item-details">
-                      <span className="export-item-title">Download as Word (.docx / .doc)</span>
-                      <span className="export-item-desc">Microsoft Word document</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="export-menu-item"
-                    onClick={() => {
-                      exportToPptx("TharikAI Presentation", cleanText, `Presentation_${id.slice(-4)}.pptx`);
-                      setExportMenuOpen(false);
-                    }}
-                  >
-                    <span className="export-item-icon ppt-icon">📽️</span>
-                    <div className="export-item-details">
-                      <span className="export-item-title">Download as PowerPoint (.pptx)</span>
-                      <span className="export-item-desc">Multi-slide presentation deck</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="export-menu-item"
-                    onClick={() => {
-                      exportTableToCsv(cleanText, `Data_${id.slice(-4)}.csv`);
-                      setExportMenuOpen(false);
-                    }}
-                  >
-                    <span className="export-item-icon csv-icon">📑</span>
-                    <div className="export-item-details">
-                      <span className="export-item-title">Download as CSV (.csv)</span>
-                      <span className="export-item-desc">Comma-separated table values</span>
-                    </div>
-                  </button>
-
-                  {/* ZIP option if code blocks exist */}
-                  {extractedCodeBlocks.length > 0 && (
-                    <button
-                      type="button"
-                      className="export-menu-item"
-                      onClick={() => {
-                        exportToZip(extractedCodeBlocks, `Code_Files_${id.slice(-4)}.zip`);
-                        setExportMenuOpen(false);
-                      }}
-                    >
-                      <span className="export-item-icon zip-icon">📦</span>
-                      <div className="export-item-details">
-                        <span className="export-item-title">Download All Code as ZIP (.zip)</span>
-                        <span className="export-item-desc">Bundle {extractedCodeBlocks.length} code file{extractedCodeBlocks.length > 1 ? "s" : ""}</span>
-                      </div>
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    className="export-menu-item"
-                    onClick={() => {
-                      downloadTextFile(`document_${id.slice(-4)}.txt`, cleanText, "text/plain;charset=utf-8;");
-                      setExportMenuOpen(false);
-                    }}
-                  >
-                    <span className="export-item-icon txt-icon">📄</span>
-                    <div className="export-item-details">
-                      <span className="export-item-title">Download as Plain Text (.txt)</span>
-                      <span className="export-item-desc">Clean plain text knowledge</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="export-menu-item"
-                    onClick={() => {
-                      downloadTextFile(`response_${id.slice(-4)}.md`, cleanText, "text/markdown");
-                      setExportMenuOpen(false);
-                    }}
-                  >
-                    <span className="export-item-icon md-icon">📝</span>
-                    <div className="export-item-details">
-                      <span className="export-item-title">Download as Markdown (.md)</span>
-                      <span className="export-item-desc">Raw markdown text file</span>
-                    </div>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Thumbs Up / Down Feedback (Assistant message only) */}
-            {!isUser && (
-              <>
-                <button
-                  type="button"
-                  className={`msg-action-btn msg-feedback-btn ${feedback === "up" ? "is-liked" : ""}`}
-                  onClick={() => setFeedback(feedback === "up" ? null : "up")}
-                  title="Good response"
-                  aria-label="Like response"
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill={feedback === "up" ? "#10a37f" : "none"} stroke={feedback === "up" ? "#10a37f" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  className={`msg-action-btn msg-feedback-btn ${feedback === "down" ? "is-disliked" : ""}`}
-                  onClick={() => setFeedback(feedback === "down" ? null : "down")}
-                  title="Bad response"
-                  aria-label="Dislike response"
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill={feedback === "down" ? "#ef4444" : "none"} stroke={feedback === "down" ? "#ef4444" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
-                  </svg>
-                </button>
-              </>
             )}
           </div>
         )}

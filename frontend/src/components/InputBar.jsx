@@ -444,7 +444,7 @@ export default function InputBar({
             placeholder={
               isListening
                 ? "Listening..."
-                : "Message TharikAI..."
+                : "Ask anything"
             }
             value={value}
             onChange={handleInput}
@@ -452,21 +452,7 @@ export default function InputBar({
           />
         </div>
 
-
-        {/* Live Voice-to-Voice Mode Button (ChatGPT style) */}
-        {onOpenVoiceMode && (
-          <button
-            type="button"
-            className="input-voice-mode-btn"
-            onClick={onOpenVoiceMode}
-            aria-label="Start Voice Mode"
-            title="Start live voice conversation (Voice Agent)"
-          >
-            <HeadphonesIcon />
-          </button>
-        )}
-
-        {/* Voice-to-text Microphone Button */}
+        {/* Dictation Microphone Button */}
         <button
           type="button"
           className={`voice-btn ${isListening ? "listening" : ""}`}
@@ -477,16 +463,29 @@ export default function InputBar({
           {isListening ? <MicOffIcon /> : <MicIcon />}
         </button>
 
-        {/* Send message button */}
-        <button
-          className="send-btn"
-          disabled={(!value.trim() && attachments.length === 0) || disabled}
-          onClick={submit}
-          aria-label="Send message"
-          title="Send message"
-        >
-          <SendIcon />
-        </button>
+        {/* Dynamic Action Button: Voice Waveform when empty, Up Arrow Send when typing */}
+        {hasContent ? (
+          <button
+            type="button"
+            className="chatgpt-primary-action-btn send-active"
+            disabled={disabled}
+            onClick={submit}
+            aria-label="Send message"
+            title="Send message"
+          >
+            <UpArrowSendIcon />
+          </button>
+        ) : onOpenVoiceMode ? (
+          <button
+            type="button"
+            className="chatgpt-primary-action-btn voice-active"
+            onClick={onOpenVoiceMode}
+            aria-label="Start Voice Mode"
+            title="Start live voice conversation (Voice Agent)"
+          >
+            <VoiceWaveformIcon />
+          </button>
+        ) : null}
       </div>
       <p className="disclaimer">TharikAI can make mistakes. Check important info.</p>
     </div>
@@ -542,21 +541,27 @@ function MicOffIcon() {
   );
 }
 
-function SendIcon() {
+function VoiceWaveformIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path
-        d="M2 8l12-6-4.5 12-2-5-5.5-1Z"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="6" y1="9" x2="6" y2="15" />
+      <line x1="10" y1="6" x2="10" y2="18" />
+      <line x1="14" y1="4" x2="14" y2="20" />
+      <line x1="18" y1="8" x2="18" y2="16" />
     </svg>
   );
 }
 
-function HeadphonesIcon() {
+function UpArrowSendIcon() {
   return (
     <svg
       width="18"
@@ -564,12 +569,12 @@ function HeadphonesIcon() {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2.1"
+      strokeWidth="2.8"
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
-      <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="5 12 12 5 19 12" />
     </svg>
   );
 }

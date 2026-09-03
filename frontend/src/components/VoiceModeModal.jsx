@@ -264,13 +264,7 @@ export default function VoiceModeModal({
       <div className="voice-modal-container">
         {/* Header toolbar */}
         <div className="voice-modal-header">
-          <div className="voice-header-info">
-            <span className="voice-live-badge">
-              <span className="live-dot" /> LIVE VOICE
-            </span>
-            <span className="voice-conv-title">{activeConversationTitle}</span>
-          </div>
-
+          <div />
           <button
             type="button"
             className="voice-close-btn"
@@ -346,29 +340,6 @@ export default function VoiceModeModal({
               <span className="status-idle-text">Ready</span>
             )}
           </div>
-        </div>
-
-        {/* Live Captions / Transcript Section */}
-        <div className="voice-transcript-card">
-          {userTranscript && (
-            <div className="transcript-bubble transcript-user">
-              <span className="transcript-label">You:</span>
-              <p>{userTranscript}</p>
-            </div>
-          )}
-
-          {aiTranscript && (
-            <div className="transcript-bubble transcript-ai">
-              <span className="transcript-label">TharikAI:</span>
-              <p>{aiTranscript}</p>
-            </div>
-          )}
-
-          {!userTranscript && !aiTranscript && (
-            <div className="transcript-empty-hint">
-              <span>Start speaking naturally... Say "Hi", "What's the weather today?", or ask any question.</span>
-            </div>
-          )}
         </div>
 
         {/* Bottom Action Controls */}

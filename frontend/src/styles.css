@@ -1551,13 +1551,48 @@ textarea {
   }
 }
 
+/* ChatGPT Dynamic Primary Action Button (Blue circle with Voice Waveform or Send Arrow) */
+.chatgpt-primary-action-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+
+.chatgpt-primary-action-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+  transform: scale(1.05);
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.45);
+}
+
+.chatgpt-primary-action-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.chatgpt-primary-action-btn:disabled {
+  background: var(--border-subtle, #2f333a);
+  color: var(--text-faint, #6b7280);
+  cursor: default;
+  box-shadow: none;
+}
+
 .send-btn {
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-ink);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1566,7 +1601,7 @@ textarea {
 }
 
 .send-btn:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: #1d4ed8;
 }
 
 .send-btn:disabled {
