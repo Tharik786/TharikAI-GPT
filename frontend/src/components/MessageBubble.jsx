@@ -3,16 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import {
-  exportToPdf,
-  exportTableToExcel,
-  exportTableToCsv,
-  exportToWordDoc,
-  exportToPptx,
-  exportToZip,
-  downloadTextFile,
-  extractCodeBlocksFromMarkdown,
-} from "../utils/exportService.js";
+
 
 function getUserInitial(user) {
   if (!user) return "U";
@@ -215,7 +206,6 @@ const CodeBlock = React.memo(function CodeBlock({ inline, className, children, .
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
-
   const handleDownloadCode = () => {
     const extMap = {
       python: "py", py: "py", javascript: "js", js: "js", jsx: "jsx",
@@ -225,7 +215,7 @@ const CodeBlock = React.memo(function CodeBlock({ inline, className, children, .
       sh: "sh", bash: "sh", markdown: "md", md: "md", text: "txt",
     };
     const ext = extMap[lang.toLowerCase()] || "txt";
-    downloadTextFile(`code_${Date.now().toString().slice(-4)}.${ext}`, codeText);
+    downloadSnippet(`code_${Date.now().toString().slice(-4)}.${ext}`, codeText);
   };
 
   return (
@@ -261,6 +251,18 @@ const CodeBlock = React.memo(function CodeBlock({ inline, className, children, .
     </div>
   );
 });
+
+function downloadSnippet(filename, content) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+}
 
 const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ...props }) {
   const [loaded, setLoaded] = useState(false);
@@ -336,13 +338,6 @@ const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ..
         )}
       </div>
 
-      {alt && (
-        <div className="generated-image-caption">
-          <span className="image-prompt-badge">AI Image</span>
-          <span className="image-prompt-text">{alt}</span>
-        </div>
-      )}
-
       {/* Full screen Lightbox preview modal */}
       {modalOpen && (
         <div className="image-lightbox-overlay" onClick={() => setModalOpen(false)}>
@@ -370,45 +365,9 @@ const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ..
 });
 
 const TableWrapper = ({ children, ...props }) => {
-  const tableRef = useRef(null);
-  const [exported, setExported] = useState(false);
-
-  const handleExportExcel = () => {
-    if (!tableRef.current) return;
-    const rows = [];
-    const trList = tableRef.current.querySelectorAll("tr");
-    trList.forEach((tr) => {
-      const row = [];
-      const cells = tr.querySelectorAll("th, td");
-      cells.forEach((c) => row.push(c.innerText.trim()));
-      if (row.length > 0) rows.push(row);
-    });
-    exportTableToExcel(rows, `Dataset_${Date.now().toString().slice(-4)}.xlsx`);
-    setExported(true);
-    setTimeout(() => setExported(false), 2000);
-  };
-
   return (
     <div className="table-responsive-wrapper">
-      <div className="table-top-toolbar">
-        <span className="table-tag">Data Table</span>
-        <button
-          type="button"
-          className="table-export-btn"
-          onClick={handleExportExcel}
-          title="Export table as Microsoft Excel (.xlsx)"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="8" y1="13" x2="16" y2="13" />
-            <line x1="8" y1="17" x2="16" y2="17" />
-            <polyline points="10 9 9 9 8 9" />
-          </svg>
-          <span>{exported ? "Downloaded (.xlsx)!" : "Export Excel (.xlsx)"}</span>
-        </button>
-      </div>
-      <table ref={tableRef} {...props}>{children}</table>
+      <table {...props}>{children}</table>
     </div>
   );
 };
@@ -438,9 +397,6 @@ function MessageBubble({
   const isUser = role === "user";
   const userInitial = getUserInitial(user);
   const [copied, setCopied] = useState(false);
-  const [feedback, setFeedback] = useState(null); // 'up' | 'down' | null
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const exportMenuRef = useRef(null);
 
   // Extract clean text and parsed attachments:
   // For assistant messages, skip expensive document parsing regexes during streaming
@@ -450,24 +406,6 @@ function MessageBubble({
     }
     return parseMessageContent(content, propAttachments);
   }, [isUser, content, propAttachments]);
-
-  // Extract code blocks for ZIP export
-  const extractedCodeBlocks = useMemo(() => {
-    if (!cleanText || isUser) return [];
-    return extractCodeBlocksFromMarkdown(cleanText);
-  }, [cleanText, isUser]);
-
-  // Close export dropdown when clicking outside
-  useEffect(() => {
-    if (!exportMenuOpen) return;
-    const handleClickOutside = (e) => {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
-        setExportMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [exportMenuOpen]);
 
   const handleCopyMessage = () => {
     if (!cleanText) return;
@@ -502,6 +440,8 @@ function MessageBubble({
           isStreaming ? "is-streaming" : ""
         } ${isSpeaking ? "bubble-speaking" : ""}`}
       >
+
+
         {/* Render document attachment cards above or below the message text */}
         {attachments && attachments.length > 0 && (
           <div className="message-attachments-container">
@@ -511,19 +451,7 @@ function MessageBubble({
           </div>
         )}
 
-        {/* Real-time search status indicator while querying web */}
-        {!isUser && searchStatus && (
-          <div className="web-search-status-bar">
-            <GlobeMiniIcon />
-            <span className="search-status-text">{searchStatus}</span>
-            <span className="search-status-pulse" />
-          </div>
-        )}
 
-        {/* Real-time Web Sources Widget */}
-        {!isUser && sources && sources.length > 0 && (
-          <WebSourcesSection sources={sources} />
-        )}
 
         {cleanText ? (
           <div className="markdown-content">
@@ -550,8 +478,8 @@ function MessageBubble({
           </span>
         )}
 
-        {/* Message Actions - only on AI Assistant responses */}
-        {!isStreaming && cleanText && !isUser && (
+        {/* Assistant Message Actions (Read aloud TTS, Copy, Retry - Icons Only) */}
+        {!isUser && !isStreaming && cleanText && (
           <div className="message-actions-bar">
             <button
               type="button"
@@ -593,7 +521,7 @@ function MessageBubble({
               type="button"
               className="msg-action-btn msg-copy-btn"
               onClick={handleCopyMessage}
-              title={copied ? "Copied!" : "Copy response"}
+              title={copied ? "Copied!" : "Copy message"}
               aria-label="Copy message"
             >
               {copied ? (
@@ -626,13 +554,13 @@ function MessageBubble({
               )}
             </button>
 
-            {/* Retry / Regenerate Response Button (Assistant message only) */}
-            {!isUser && onRetry && (
+            {/* Retry / Regenerate Response Button */}
+            {onRetry && (
               <button
                 type="button"
                 className="msg-action-btn msg-retry-btn"
                 onClick={() => onRetry(id)}
-                title="Regenerate response"
+                title="Retry message"
                 aria-label="Retry message"
               >
                 <svg
@@ -654,113 +582,6 @@ function MessageBubble({
         )}
       </div>
     </div>
-  );
-}
-
-function WebSourcesSection({ sources }) {
-
-  const [expanded, setExpanded] = useState(false);
-  if (!sources || sources.length === 0) return null;
-
-  return (
-    <div className="web-sources-section">
-      <div
-        className="web-sources-header"
-        onClick={() => setExpanded(!expanded)}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setExpanded(!expanded);
-          }
-        }}
-      >
-        <div className="web-sources-title">
-          <GlobeMiniIcon />
-          <span>{sources.length} Web Sources</span>
-        </div>
-        <button
-          type="button"
-          className="web-sources-toggle-btn"
-          aria-label={expanded ? "Collapse sources" : "Expand sources"}
-        >
-          <span>{expanded ? "Show less" : "Show all"}</span>
-          <ChevronIcon rotated={expanded} />
-        </button>
-      </div>
-
-      <div className={`web-sources-grid ${expanded ? "is-expanded" : ""}`}>
-        {(expanded ? sources : sources.slice(0, 3)).map((source, idx) => (
-          <a
-            key={idx}
-            href={source.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="web-source-card"
-            title={`${source.title}\n${source.url}`}
-          >
-            <div className="source-card-top">
-              <img
-                src={`https://www.google.com/s2/favicons?domain=${source.domain || source.url}&sz=32`}
-                alt=""
-                className="source-favicon"
-                onError={(e) => {
-                  e.currentTarget.style.display = "none";
-                }}
-              />
-              <span className="source-domain">{source.domain || "Source"}</span>
-            </div>
-            <div className="source-card-title">{source.title}</div>
-            {source.content && (
-              <div className="source-card-snippet">
-                {source.content.slice(0, 95)}...
-              </div>
-            )}
-          </a>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function GlobeMiniIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <line x1="2" y1="12" x2="22" y2="12" />
-      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-    </svg>
-  );
-}
-
-function ChevronIcon({ rotated }) {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{
-        transform: rotated ? "rotate(180deg)" : "rotate(0deg)",
-        transition: "transform 0.2s ease",
-      }}
-    >
-      <polyline points="6 9 12 15 18 9" />
-    </svg>
   );
 }
 

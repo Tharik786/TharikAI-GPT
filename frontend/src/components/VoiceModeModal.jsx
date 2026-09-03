@@ -262,7 +262,7 @@ export default function VoiceModeModal({
       <div className={`voice-ambient-glow glow-${status}`} />
 
       <div className="voice-modal-container">
-        {/* Header toolbar */}
+        {/* Top Close Button */}
         <div className="voice-modal-header">
           <div />
           <button
@@ -340,64 +340,6 @@ export default function VoiceModeModal({
               <span className="status-idle-text">Ready</span>
             )}
           </div>
-        </div>
-
-        {/* Bottom Action Controls */}
-        <div className="voice-modal-controls">
-          {/* Mute/Unmute Toggle */}
-          <button
-            type="button"
-            className={`voice-ctrl-btn ${isMuted ? "btn-danger" : "btn-secondary"}`}
-            onClick={toggleMute}
-            title={isMuted ? "Unmute microphone" : "Mute microphone"}
-          >
-            {isMuted ? (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="1" y1="1" x2="23" y2="23" />
-                <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
-                <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
-                <line x1="12" y1="19" x2="12" y2="23" />
-                <line x1="8" y1="23" x2="16" y2="23" />
-              </svg>
-            ) : (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" y1="19" x2="12" y2="23" />
-                <line x1="8" y1="23" x2="16" y2="23" />
-              </svg>
-            )}
-            <span>{isMuted ? "Unmute" : "Mute"}</span>
-          </button>
-
-          {/* Interrupt / Stop Speaking Button */}
-          {status === "speaking" && (
-            <button
-              type="button"
-              className="voice-ctrl-btn btn-warning"
-              onClick={handleInterrupt}
-              title="Interrupt AI speaking"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="6" y="6" width="12" height="12" rx="2" />
-              </svg>
-              <span>Interrupt</span>
-            </button>
-          )}
-
-          {/* End Call / Close Button */}
-          <button
-            type="button"
-            className="voice-ctrl-btn btn-end-call"
-            onClick={onClose}
-            title="End voice session"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-            <span>End Call</span>
-          </button>
         </div>
       </div>
     </div>
