@@ -1,7 +1,7 @@
 /**
- * Natural Text-to-Speech Engine for TharikAI
+ * Natural Multilingual Text-to-Speech Engine for TharikAI
  * Built on the Web Speech Synthesis API with intelligent Markdown cleanup,
- * chunking to bypass browser length limits, voice selection, and state tracking.
+ * Unicode script & language detection, native BCP-47 locale binding, and chunking.
  */
 
 // Global state
@@ -14,8 +14,8 @@ let selectedVoice = null;
 let stateListeners = new Set();
 
 /**
- * Strips raw Markdown, code snippets, attachment markers, and URLs
- * so the synthesizer speaks fluent, natural sentences without reading symbols aloud.
+ * Strips raw Markdown, code snippets, attachment markers, emojis, and URLs
+ * so the synthesizer speaks fluent, natural, crystal-clear sentences.
  */
 export function cleanTextForSpeech(raw = "") {
   if (!raw || typeof raw !== "string") return "";
@@ -28,13 +28,13 @@ export function cleanTextForSpeech(raw = "") {
   text = text.replace(/\[Document:[\s\S]*?\[End of Document\]/gi, "");
   text = text.replace(/\[Attached image:.*?\]/gi, "");
 
-  // Replace multiline code blocks with a natural brief pause/mention
+  // Replace multiline code blocks with a brief natural mention
   text = text.replace(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/g, (match, code) => {
     const lines = code.trim().split("\n");
     if (lines.length <= 2 && code.length < 80) {
       return ` ${code.trim()} `;
     }
-    return " [code omitted] ";
+    return " , code block omitted , ";
   });
 
   // Replace inline backticks
@@ -65,23 +65,32 @@ export function cleanTextForSpeech(raw = "") {
   text = text.replace(/^[\s]*[-*+]\s+/gm, "");
   text = text.replace(/^[\s]*\d+\.\s+/gm, "");
 
-  // Remove remaining HTML tags
+  // Remove HTML tags & decode common entities
   text = text.replace(/<[^>]*>/g, "");
+  text = text.replace(/&amp;/g, " and ");
+  text = text.replace(/&lt;/g, "<");
+  text = text.replace(/&gt;/g, ">");
+  text = text.replace(/&quot;/g, '"');
+  text = text.replace(/&#39;/g, "'");
 
-  // Clean excessive whitespace
+  // Replace math symbols with readable words
+  text = text.replace(/\$\$(.*?)\$\$/g, "$1");
+  text = text.replace(/\$(.*?)\$/g, "$1");
+
+  // Clean excessive whitespace and ensure proper sentence termination
   text = text.replace(/\s+/g, " ").trim();
 
   return text;
 }
 
 /**
- * Splits text into logical sentence chunks (~150-200 chars)
+ * Splits text into logical sentence chunks (~140-180 chars)
  * to avoid browser SpeechSynthesis cutoffs on long paragraphs.
  */
 function splitIntoChunks(text) {
   if (!text) return [];
   // Split on sentence terminators while preserving them
-  const sentences = text.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) || [text];
+  const sentences = text.match(/[^.!?\n\r]+[.!?\n\r]+(?:\s+|$)|[^.!?\n\r]+$/g) || [text];
   const chunks = [];
   let buffer = "";
 
@@ -89,12 +98,12 @@ function splitIntoChunks(text) {
     const trimmed = sentence.trim();
     if (!trimmed) continue;
 
-    if (buffer.length + trimmed.length < 180) {
+    if (buffer.length + trimmed.length < 160) {
       buffer = buffer ? `${buffer} ${trimmed}` : trimmed;
     } else {
       if (buffer) chunks.push(buffer);
-      if (trimmed.length > 200) {
-        // Break unusually long sentence by commas/clauses
+      if (trimmed.length > 180) {
+        // Break unusually long sentence by commas or clauses
         const parts = trimmed.match(/[^,;]+[,;]+(?:\s+|$)|[^,;]+$/g) || [trimmed];
         for (const p of parts) {
           if (p.trim()) chunks.push(p.trim());
@@ -148,6 +157,42 @@ export function getAvailableVoices() {
 }
 
 /**
+ * Maps short language code to official BCP-47 locale tag
+ */
+export function getBCP47LangTag(langCode = "en") {
+  const map = {
+    ta: "ta-IN",
+    hi: "hi-IN",
+    te: "te-IN",
+    kn: "kn-IN",
+    ml: "ml-IN",
+    bn: "bn-IN",
+    mr: "mr-IN",
+    gu: "gu-IN",
+    pa: "pa-IN",
+    ur: "ur-IN",
+    es: "es-ES",
+    fr: "fr-FR",
+    de: "de-DE",
+    it: "it-IT",
+    pt: "pt-BR",
+    ar: "ar-SA",
+    ru: "ru-RU",
+    zh: "zh-CN",
+    ja: "ja-JP",
+    ko: "ko-KR",
+    tr: "tr-TR",
+    id: "id-ID",
+    th: "th-TH",
+    vi: "vi-VN",
+    el: "el-GR",
+    en: "en-US",
+  };
+  const code = (langCode || "en").toLowerCase().split("-")[0];
+  return map[code] || langCode || "en-US";
+}
+
+/**
  * Detect language script and language family from text
  */
 export function detectTextLanguage(text = "") {
@@ -161,6 +206,8 @@ export function detectTextLanguage(text = "") {
   if (/[\u0C80-\u0CFF]/.test(str)) return "kn"; // Kannada
   if (/[\u0D00-\u0D7F]/.test(str)) return "ml"; // Malayalam
   if (/[\u0980-\u09FF]/.test(str)) return "bn"; // Bengali
+  if (/[\u0A80-\u0AFF]/.test(str)) return "gu"; // Gujarati
+  if (/[\u0A00-\u0A7F]/.test(str)) return "pa"; // Punjabi
   if (/[\u0600-\u06FF]/.test(str)) return "ar"; // Arabic / Urdu
   if (/[\u3040-\u30FF]/.test(str)) return "ja"; // Japanese Hiragana/Katakana
   if (/[\u4E00-\u9FFF]/.test(str)) return "zh"; // Chinese
@@ -190,33 +237,42 @@ export function getBestVoiceForLanguage(langCode = "en", preferredVoiceURI = nul
   const voices = window.speechSynthesis.getVoices();
   if (!voices || voices.length === 0) return null;
 
+  const code = (langCode || "en").toLowerCase().split("-")[0];
+
   // 1. If explicit preferred voice URI is requested and matches language
   if (preferredVoiceURI) {
     const matchedURI = voices.find((v) => v.voiceURI === preferredVoiceURI);
     if (matchedURI) return matchedURI;
   }
 
-  // 2. Filter voices by language code prefix (e.g. 'ta', 'hi', 'es', 'fr', 'en')
+  // 2. Filter voices by language code prefix (e.g. 'ta', 'hi', 'te', 'es', 'fr', 'en')
   const langVoices = voices.filter(
-    (v) => v.lang && (v.lang.toLowerCase().startsWith(langCode.toLowerCase()) || v.lang.toLowerCase().replace("_", "-").startsWith(langCode.toLowerCase()))
+    (v) => v.lang && (v.lang.toLowerCase().startsWith(code) || v.lang.toLowerCase().replace("_", "-").startsWith(code))
   );
 
   if (langVoices.length > 0) {
     // Priority order for natural / neural / Google / Microsoft voices in this language
-    const preferredKeywords = ["natural", "neural", "google", "online", "premium", "enhanced"];
+    const preferredKeywords = ["natural", "neural", "google", "online", "premium", "enhanced", "hi-in", "ta-in"];
     for (const kw of preferredKeywords) {
-      const best = langVoices.find((v) => v.name.toLowerCase().includes(kw));
+      const best = langVoices.find((v) => (v.name || "").toLowerCase().includes(kw));
       if (best) return best;
     }
     return langVoices[0];
   }
 
-  // 3. Fallback to general getBestVoice
-  return getBestVoice();
+  // 3. If English requested, return best English voice
+  if (code === "en") {
+    return getBestVoice();
+  }
+
+  // 4. For non-English languages where no specific voice object is preloaded,
+  // return null so that the synthesizer uses utterance.lang locale directly
+  // rather than incorrectly forcing an English voice!
+  return null;
 }
 
 /**
- * Find the best natural voice available in the client browser
+ * Find the best natural English voice available in the client browser
  */
 export function getBestVoice() {
   if (!isSpeechSupported()) return null;
@@ -247,12 +303,11 @@ export function getBestVoice() {
   }
 
   // Fallback to any English voice
-  const enVoice = voices.find((v) => v.lang.startsWith("en"));
+  const enVoice = voices.find((v) => v.lang && v.lang.startsWith("en"));
   if (enVoice) return enVoice;
 
   return voices[0] || null;
 }
-
 
 /**
  * Stop any active speech immediately
@@ -304,8 +359,7 @@ export function setSpeechRate(newRate) {
 }
 
 /**
- * Speak the given message text. If the same message is already speaking,
- * toggles stop/start.
+ * Speak the given message text in its exact detected language with crystal-clear pronunciation.
  */
 export function speakMessage(messageId, text, options = {}) {
   if (!isSpeechSupported()) {
@@ -333,8 +387,12 @@ export function speakMessage(messageId, text, options = {}) {
   isPaused = false;
   notifyListeners();
 
+  // 1. Detect language code & BCP-47 locale tag
   const detectedLang = options.lang || detectTextLanguage(cleaned);
-  const voice = options.voice || getBestVoiceForLanguage(detectedLang, options.voiceURI) || getBestVoice();
+  const targetLocale = getBCP47LangTag(detectedLang);
+
+  // 2. Select native voice matching this language
+  const voice = options.voice || getBestVoiceForLanguage(detectedLang, options.voiceURI);
   const rate = options.rate || currentRate;
 
   let chunkIndex = 0;
@@ -356,11 +414,18 @@ export function speakMessage(messageId, text, options = {}) {
 
     const chunkText = chunks[chunkIndex];
     const utterance = new SpeechSynthesisUtterance(chunkText);
-    if (voice) utterance.voice = voice;
+
+    // Explicitly set language tag so phonetics match the exact language!
+    utterance.lang = (voice && voice.lang) ? voice.lang : targetLocale;
+    if (voice) {
+      utterance.voice = voice;
+    }
+    
+    // Smooth, clear rate
     utterance.rate = rate;
     utterance.pitch = 1.0;
 
-    // Prevent garbage collection bug in Chrome
+    // Prevent garbage collection bug in Chromium
     currentUtterances.push(utterance);
 
     utterance.onend = () => {
@@ -369,7 +434,6 @@ export function speakMessage(messageId, text, options = {}) {
     };
 
     utterance.onerror = (e) => {
-      // If stopped deliberately, ignore
       if (e.error === "canceled" || e.error === "interrupted") return;
       console.warn("Speech synthesis chunk note:", e.error);
       chunkIndex++;
