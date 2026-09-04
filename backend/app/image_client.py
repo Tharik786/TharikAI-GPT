@@ -91,6 +91,20 @@ RE_MULTILINGUAL = [
 ]
 
 
+def _clean_extracted_prompt(p: str) -> str:
+    if not p:
+        return ""
+    cleaned = p.strip()
+    # Strip leading artifacts like "me for ", "for me ", "me of ", "for ", "of "
+    cleaned = re.sub(
+        r"^(?:(?:for\s+)?(?:me|us)\s+(?:for|of|about|showing|with)\s+|me\s+for\s+|for\s+me\s+|me\s+|us\s+|for\s+|of\s+|about\s+|showing\s+)",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned or p.strip()
+
+
 def detect_image_prompt(query: str) -> str | None:
     """
     Checks if a user query requests image generation across all natural language variations,
@@ -105,28 +119,28 @@ def detect_image_prompt(query: str) -> str | None:
     # 1. Action + Noun Match (e.g. "Can u create an image for the men behind standing in the train")
     m = RE_IMAGE_ACTION_NOUN.match(q)
     if m and m.group(1).strip():
-        res = m.group(1).strip()
+        res = _clean_extracted_prompt(m.group(1))
         if len(res) >= 2:
             return res
 
     # 2. Direct Draw/Paint Match (e.g. "draw an astronaut on Mars")
     m = RE_DIRECT_DRAW.match(q)
     if m and m.group(1).strip():
-        res = m.group(1).strip()
+        res = _clean_extracted_prompt(m.group(1))
         if len(res) >= 2:
             return res
 
     # 3. Slash command match (/imagine, /image, /draw)
     m = RE_SLASH_IMAGE.match(q)
     if m and m.group(1).strip():
-        res = m.group(1).strip()
+        res = _clean_extracted_prompt(m.group(1))
         if len(res) >= 2:
             return res
 
     # 4. Noun first match ("image of a dragon flying over city")
     m = RE_NOUN_FIRST.match(q)
     if m and m.group(1).strip():
-        res = m.group(1).strip()
+        res = _clean_extracted_prompt(m.group(1))
         if len(res) >= 2:
             return res
 
@@ -134,14 +148,14 @@ def detect_image_prompt(query: str) -> str | None:
     for pattern in RE_MULTILINGUAL:
         m = pattern.match(q)
         if m and m.group(1).strip():
-            res = m.group(1).strip()
+            res = _clean_extracted_prompt(m.group(1))
             if len(res) >= 2:
                 return res
 
     # 6. Suffix match ("cyberpunk street in rain image")
     m = RE_SUFFIX_IMAGE.match(q)
     if m and m.group(1).strip():
-        res = m.group(1).strip()
+        res = _clean_extracted_prompt(m.group(1))
         # Avoid false positives for very short single words
         if len(res.split()) >= 2:
             return res
@@ -168,9 +182,17 @@ async def generate_image_url(prompt: str) -> dict:
         if response.status_code != 200:
             raise Exception(f"Image API returned HTTP {response.status_code}: {response.text[:200]}")
         
-        content_type = response.headers.get("content-type", "image/jpeg")
-        if not content_type.startswith("image/"):
+        # Determine image format by magic bytes
+        if response.content.startswith(b"\x89PNG"):
+            content_type = "image/png"
+        elif response.content.startswith(b"\xff\xd8\xff"):
             content_type = "image/jpeg"
+        elif response.content.startswith(b"RIFF") and b"WEBP" in response.content[:16]:
+            content_type = "image/webp"
+        else:
+            content_type = response.headers.get("content-type", "image/jpeg")
+            if not content_type.startswith("image/"):
+                content_type = "image/jpeg"
 
         b64_data = base64.b64encode(response.content).decode("utf-8")
         data_url = f"data:{content_type};base64,{b64_data}"

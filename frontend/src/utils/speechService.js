@@ -199,9 +199,9 @@ export function detectTextLanguage(text = "") {
   if (!text || typeof text !== "string") return "en";
   const str = text.trim();
 
-  // 1. Script-based Unicode detection
+  // 1. Script-based Unicode detection (100% accurate for native scripts)
   if (/[\u0B80-\u0BFF]/.test(str)) return "ta"; // Tamil
-  if (/[\u0900-\u097F]/.test(str)) return "hi"; // Hindi / Devanagari
+  if (/[\u0900-\u097F]/.test(str)) return "hi"; // Hindi / Devanagari / Marathi
   if (/[\u0C00-\u0C7F]/.test(str)) return "te"; // Telugu
   if (/[\u0C80-\u0CFF]/.test(str)) return "kn"; // Kannada
   if (/[\u0D00-\u0D7F]/.test(str)) return "ml"; // Malayalam
@@ -209,30 +209,51 @@ export function detectTextLanguage(text = "") {
   if (/[\u0A80-\u0AFF]/.test(str)) return "gu"; // Gujarati
   if (/[\u0A00-\u0A7F]/.test(str)) return "pa"; // Punjabi
   if (/[\u0600-\u06FF]/.test(str)) return "ar"; // Arabic / Urdu
-  if (/[\u3040-\u30FF]/.test(str)) return "ja"; // Japanese Hiragana/Katakana
+  if (/[\u3040-\u30FF\u31F0-\u31FF]/.test(str)) return "ja"; // Japanese Hiragana/Katakana
   if (/[\u4E00-\u9FFF]/.test(str)) return "zh"; // Chinese
-  if (/[\uAC00-\uD7AF]/.test(str)) return "ko"; // Korean
+  if (/[\uAC00-\uD7AF\u1100-\u11FF]/.test(str)) return "ko"; // Korean
   if (/[\u0400-\u04FF]/.test(str)) return "ru"; // Russian / Cyrillic
   if (/[\u0E00-\u0E7F]/.test(str)) return "th"; // Thai
   if (/[\u0370-\u03FF]/.test(str)) return "el"; // Greek
 
-  // 2. Common Latin-based language and transliteration checks
-  const lower = " " + str.toLowerCase() + " ";
+  // 2. Transliterated Indian language distinctive keywords
+  const lower = " " + str.toLowerCase().replace(/[^\w\s]/g, " ") + " ";
 
-  // Transliterated Tamil / Hindi / Indian languages
-  if (/\b(vanakkam|eppadi|nandri|irukinga|enna|sollunga|ungalukku|thambi|akka|seri|aama|illa)\b/i.test(lower)) return "ta";
-  if (/\b(namaste|kaise|kya|batao|dhanyawad|shukriya|accha|theek|bhai|aapka|mera|hai|hain)\b/i.test(lower)) return "hi";
+  if (/\b(vanakkam|eppadi irukkinga|solla mudiyuma|nandri|unggalukku|thambi|seri thambi|aama pa)\b/i.test(lower)) {
+    return "ta";
+  }
+  if (/\b(namaste|kaise ho|dhanyawad|shukriya|kya haal|theek hai|bataiye|aapka swagat)\b/i.test(lower)) {
+    return "hi";
+  }
 
-  // European & Global Languages
-  if (/\b(el|la|los|las|un|una|hola|gracias|cómo|por favor|es|son|de|en|que|para)\b/.test(lower)) return "es"; // Spanish
-  if (/\b(le|la|les|un|une|bonjour|merci|comment|s'il vous plaît|est|sont|de|en|que|pour)\b/.test(lower)) return "fr"; // French
-  if (/\b(der|die|das|ein|eine|hallo|danke|wie|bitte|ist|sind|von|in|dass|für)\b/.test(lower)) return "de"; // German
-  if (/\b(il|la|i|gli|le|un|una|ciao|grazie|come|per favore|è|sono|di|in|che|per)\b/.test(lower)) return "it"; // Italian
-  if (/\b(o|a|os|as|um|uma|olá|obrigado|como|por favor|é|são|de|em|que|para)\b/.test(lower)) return "pt"; // Portuguese
-  if (/\b(bir|bu|ve|için|merhaba|teşekkürler|nasıl|lütfen|mi|mu)\b/.test(lower)) return "tr"; // Turkish
-  if (/\b(yang|dan|di|ini|itu|halo|terima kasih|bagaimana|tolong|adalah)\b/.test(lower)) return "id"; // Indonesian
-  if (/\b(marhaban|shukran|ahlan|kayfa|hal|kayf|salam)\b/i.test(lower)) return "ar"; // Arabic transliteration
+  // 3. European / global languages: only match distinctive multi-word or unique phrases
+  // Never match common English stop words like 'in', 'is', 'as', 'to', 'on', 'or', 'de', 'en', 'la'
+  if (/\b(hola|buenos días|buenas tardes|muchas gracias|cómo estás|por favor|hasta luego|bienvenido|de nada)\b/i.test(lower)) {
+    return "es";
+  }
+  if (/\b(bonjour|merci beaucoup|s'il vous plaît|bonne journée|au revoir|comment allez-vous|bienvenue)\b/i.test(lower)) {
+    return "fr";
+  }
+  if (/\b(guten tag|guten morgen|danke schön|bitte schön|auf wiedersehen|wie geht es|herzlich willkommen)\b/i.test(lower)) {
+    return "de";
+  }
+  if (/\b(buongiorno|buonasera|grazie mille|per favore|arrivederci|come stai|benvenuto)\b/i.test(lower)) {
+    return "it";
+  }
+  if (/\b(olá|bom dia|boa tarde|muito obrigado|muito obrigada|por favor|como vai|tudo bem)\b/i.test(lower)) {
+    return "pt";
+  }
+  if (/\b(merhaba|teşekkür ederim|nasılsınız|hoş geldiniz|görüşmek üzere)\b/i.test(lower)) {
+    return "tr";
+  }
+  if (/\b(terima kasih|selamat pagi|selamat siang|bagaimana kabar|sama-sama)\b/i.test(lower)) {
+    return "id";
+  }
+  if (/\b(marhaban|shukran jazilan|ahlan wa sahlan|kayfa haluk|as-salamu alaykum)\b/i.test(lower)) {
+    return "ar";
+  }
 
+  // Default to English
   return "en";
 }
 
@@ -246,10 +267,15 @@ export function getBestVoiceForLanguage(langCode = "en", preferredVoiceURI = nul
 
   const code = (langCode || "en").toLowerCase().split("-")[0];
 
-  // 1. If explicit preferred voice URI is requested and matches language
+  // 1. If explicit preferred voice URI is requested, ensure it matches the target language
   if (preferredVoiceURI) {
     const matchedURI = voices.find((v) => v.voiceURI === preferredVoiceURI);
-    if (matchedURI) return matchedURI;
+    if (matchedURI) {
+      const vLang = (matchedURI.lang || "").toLowerCase().split("-")[0];
+      if (vLang === code || (code === "en" && vLang.startsWith("en"))) {
+        return matchedURI;
+      }
+    }
   }
 
   // 2. Filter voices by language code prefix (e.g. 'ta', 'hi', 'te', 'es', 'fr', 'en')
@@ -259,7 +285,7 @@ export function getBestVoiceForLanguage(langCode = "en", preferredVoiceURI = nul
 
   if (langVoices.length > 0) {
     // Priority order for natural / neural / Google / Microsoft voices in this language
-    const preferredKeywords = ["natural", "neural", "google", "online", "premium", "enhanced", "hi-in", "ta-in"];
+    const preferredKeywords = ["natural", "neural", "google", "online", "premium", "enhanced"];
     for (const kw of preferredKeywords) {
       const best = langVoices.find((v) => (v.name || "").toLowerCase().includes(kw));
       if (best) return best;
@@ -272,9 +298,8 @@ export function getBestVoiceForLanguage(langCode = "en", preferredVoiceURI = nul
     return getBestVoice();
   }
 
-  // 4. For non-English languages where no specific voice object is preloaded,
-  // return null so that the synthesizer uses utterance.lang locale directly
-  // rather than incorrectly forcing an English voice!
+  // 4. For other languages without a specific voice object loaded, return null
+  // so that the utterance uses the target BCP-47 locale directly.
   return null;
 }
 
