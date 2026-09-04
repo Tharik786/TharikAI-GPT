@@ -39,9 +39,6 @@ from app.db import (
     save_conversation,
     set_messages as db_set_messages,
     delete_conversation as db_delete_conversation,
-    get_user_memories,
-    add_user_memory,
-    delete_user_memory,
 )
 
 
@@ -94,12 +91,6 @@ class SearchBody(BaseModel):
 
 class ResearchBody(BaseModel):
     query: str
-
-
-class MemoryCreateBody(BaseModel):
-    email: str
-    content: str
-    id: str | None = None
 
 
 class RegisterBody(BaseModel):
@@ -254,37 +245,6 @@ async def extract_document(file: UploadFile = File(...)):
     }
 
 
-@app.get("/api/memories")
-async def get_memories_endpoint(email: str):
-    """
-    Fetch long-term memories for the given user.
-    """
-    if not email:
-        raise HTTPException(status_code=400, detail="Email is required")
-    memories = get_user_memories(email)
-    return {"success": True, "memories": memories}
-
-
-@app.post("/api/memories")
-async def add_memory_endpoint(body: MemoryCreateBody):
-    """
-    Create or update a long-term user memory fact.
-    """
-    if not body.email or not body.content.strip():
-        raise HTTPException(status_code=400, detail="Email and content are required")
-    mem = add_user_memory(body.email, body.content, memory_id=body.id)
-    return {"success": True, "memory": mem}
-
-
-@app.delete("/api/memories/{memory_id}")
-async def delete_memory_endpoint(memory_id: str):
-    """
-    Delete a specific user memory fact.
-    """
-    delete_user_memory(memory_id)
-    return {"success": True}
-
-
 @app.post("/api/research")
 async def deep_research_endpoint(body: ResearchBody):
     """
@@ -331,7 +291,6 @@ async def chat(body: ChatBody):
     Unified streaming endpoint:
     - Multimodal vision (image input)
     - Real-time Web Search and Deep Multi-Source Research
-    - Cross-chat Long-Term Memory recall
     - AI Image Generation (Cloudflare Worker)
     """
     if not body.messages:
@@ -359,28 +318,6 @@ async def chat(body: ChatBody):
 
     # Detect if user is asking to generate an AI image
     image_prompt = detect_image_prompt(clean_search_query) if not is_deep_research else None
-
-    # Load user memories if logged in
-    user_memories = []
-    if body.email:
-        try:
-            mems = get_user_memories(body.email)
-            user_memories = [m["content"] for m in mems if m.get("content")]
-        except Exception as e:
-            print(f"Non-blocking memory fetch note: {e}")
-
-    # Auto-extract and save explicit memory statements (e.g., "remember that ...", "my name is ...")
-    if body.email and clean_search_query:
-        import re
-        rem_match = re.search(r"\b(?:remember\s+(?:that\s+)?|note\s+that\s+)(.+)", clean_search_query, re.IGNORECASE)
-        if rem_match:
-            fact = rem_match.group(1).strip()
-            if len(fact) > 4:
-                try:
-                    add_user_memory(body.email, fact)
-                    user_memories.append(fact)
-                except Exception as e:
-                    print(f"Auto memory save note: {e}")
 
     # Auto web search check
     perform_search = (
@@ -422,7 +359,6 @@ async def chat(body: ChatBody):
                     async for chunk in stream_chat_completion(
                         llm_messages,
                         web_search_context=deep_context,
-                        memories=user_memories,
                     ):
                         yield f"data: {json.dumps({'delta': chunk})}\n\n"
                     yield f"data: {json.dumps({'done': True})}\n\n"
@@ -444,12 +380,11 @@ async def chat(body: ChatBody):
             except Exception as e:
                 print(f"Web search non-blocking error: {e}")
 
-        # 4. Stream LLM Chat Completion (Multimodal Vision + Grounding + Memory)
+        # 4. Stream LLM Chat Completion (Multimodal Vision + Grounding)
         try:
             async for chunk in stream_chat_completion(
                 llm_messages,
                 web_search_context=search_context,
-                memories=user_memories,
             ):
                 yield f"data: {json.dumps({'delta': chunk})}\n\n"
         except GeminiError as e:

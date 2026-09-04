@@ -93,29 +93,21 @@ def init_db():
         CREATE TABLE IF NOT EXISTS public.conversations (
             id TEXT PRIMARY KEY,
             user_email TEXT NOT NULL,
-            title TEXT NOT NULL DEFAULT 'New chat',
+            title TEXT NOT NULL,
             created_at BIGINT NOT NULL,
             updated_at BIGINT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS public.messages (
             id TEXT PRIMARY KEY,
-            conversation_id TEXT NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
+            conversation_id TEXT NOT NULL,
             role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            created_at BIGINT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS public.memories (
-            id TEXT PRIMARY KEY,
-            user_email TEXT NOT NULL,
             content TEXT NOT NULL,
             created_at BIGINT NOT NULL
         );
 
         CREATE INDEX IF NOT EXISTS idx_conversations_user_email ON public.conversations(user_email);
         CREATE INDEX IF NOT EXISTS idx_messages_conv_id ON public.messages(conversation_id);
-        CREATE INDEX IF NOT EXISTS idx_memories_user_email ON public.memories(user_email);
         """
         con.run(schema_sql)
         con.close()
@@ -265,62 +257,5 @@ def delete_conversation(conv_id: str):
     con = get_db_connection()
     try:
         con.run("DELETE FROM public.conversations WHERE id = :id", id=conv_id)
-    finally:
-        con.close()
-
-
-def get_user_memories(email: str) -> list[dict]:
-    email = email.strip().lower()
-    con = get_db_connection()
-    try:
-        rows = con.run(
-            """
-            SELECT id, content, created_at
-            FROM public.memories
-            WHERE LOWER(user_email) = :email
-            ORDER BY created_at DESC
-            """,
-            email=email,
-        )
-        return [
-            {"id": r[0], "content": r[1], "createdAt": r[2]}
-            for r in rows
-        ]
-    except Exception as e:
-        logger.error(f"Error fetching memories: {e}")
-        return []
-    finally:
-        con.close()
-
-
-def add_user_memory(email: str, content: str, memory_id: str | None = None, created_at: int | None = None) -> dict:
-    import time
-    import uuid
-    email = email.strip().lower()
-    mem_id = memory_id or f"mem_{uuid.uuid4().hex[:12]}"
-    now_ts = created_at or int(time.time() * 1000)
-    con = get_db_connection()
-    try:
-        con.run(
-            """
-            INSERT INTO public.memories (id, user_email, content, created_at)
-            VALUES (:id, :email, :content, :created_at)
-            ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content
-            """,
-            id=mem_id,
-            email=email,
-            content=content.strip(),
-            created_at=now_ts,
-        )
-        return {"id": mem_id, "user_email": email, "content": content.strip(), "createdAt": now_ts}
-    finally:
-        con.close()
-
-
-def delete_user_memory(memory_id: str):
-    con = get_db_connection()
-    try:
-        con.run("DELETE FROM public.memories WHERE id = :id", id=memory_id)
-        return True
     finally:
         con.close()

@@ -177,45 +177,6 @@ export async function extractDocumentRemote(file) {
   return data;
 }
 
-export async function fetchRemoteMemories(email) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/memories?email=${encodeURIComponent(email)}`);
-    if (!res.ok) return [];
-    const data = await res.json().catch(() => ({}));
-    return data.memories || [];
-  } catch {
-    return [];
-  }
-}
-
-export async function saveMemoryRemote(memory, email) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/memories`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email,
-        content: memory.content,
-        id: memory.id,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    return data.memory;
-  } catch (e) {
-    console.warn("Failed to save memory to remote:", e);
-  }
-}
-
-export async function deleteMemoryRemote(memoryId) {
-  try {
-    await fetch(`${BASE_URL}/api/memories/${encodeURIComponent(memoryId)}`, {
-      method: "DELETE",
-    });
-  } catch (e) {
-    console.warn("Failed to delete memory from remote:", e);
-  }
-}
-
 export async function generateImageRemote(prompt) {
   const res = await fetch(`${BASE_URL}/api/image`, {
     method: "POST",

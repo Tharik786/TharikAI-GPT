@@ -38,68 +38,115 @@ IMAGE_GENERATION_CONFIG = {
     ],
 }
 
+# Universal prefix regex covering natural language variations (e.g., "can u", "can you", "please", "i want", etc.)
+PREFIX_PATTERN = r"(?:(?:can|could|would|will)\s+(?:you|u|ya)\s+(?:please\s+|pls\s+|plz\s+)?|(?:please|pls|plz)\s+|(?:i\s+(?:want|need|would like)(?:\s+you)?\s+(?:to\s+)?)|(?:help\s+me\s+(?:to\s+)?)|(?:kindly\s+)|(?:do\s+you\s+mind\s+(?:to\s+)?))?"
+VERBS_PATTERN = r"(?:generate|create|make|draw|paint|render|design|produce|sketch|give\s+me|show\s+me|craft)"
+ARTICLES_PATTERN = r"(?:(?:\s+me|\s+us)?\s+(?:an?|the|some))?"
+NOUNS_PATTERN = r"(?:images?|pictures?|pics?|photos?|photographs?|artworks?|illustrations?|posters?|logos?|portraits?|drawings?|wallpapers?|visuals?|graphics?|paintings?|sketch(?:es)?)"
+CONNECTORS_PATTERN = r"(?:of|for|about|showing|depicting|with|where|representing|based\s+on|featuring|like|that\s+shows|that\s+has|illustrating)"
 
-def _build_pattern_regex(pattern_str: str) -> re.Pattern:
-    escaped = re.escape(pattern_str).replace(r"\*", r"(.+)")
-    return re.compile(
-        rf"^\s*(?:can you\s+|could you\s+|please\s+|will you\s+|i want you to\s+|i want an?\s+)*{escaped}$",
-        re.IGNORECASE,
-    )
+# Regex 1: Action + Noun (e.g., "Can u create an image for...", "generate a photo of...", "make picture showing...")
+RE_IMAGE_ACTION_NOUN = re.compile(
+    rf"^\s*{PREFIX_PATTERN}\s*{VERBS_PATTERN}{ARTICLES_PATTERN}\s+{NOUNS_PATTERN}\s+(?:{CONNECTORS_PATTERN}\s+)?(.+?)[.!?]?\s*$",
+    re.IGNORECASE,
+)
 
+# Regex 2: Direct drawing/rendering verbs (e.g., "draw a tiger", "can u paint the sunset", "sketch an astronaut")
+RE_DIRECT_DRAW = re.compile(
+    rf"^\s*{PREFIX_PATTERN}\s*(?:draw|paint|sketch|render)\s+(?:(?:me|us)\s+)?(?:an?|the|some)?\s*(.+?)[.!?]?\s*$",
+    re.IGNORECASE,
+)
 
-COMPILED_PATTERNS = [_build_pattern_regex(p) for p in IMAGE_GENERATION_CONFIG["patterns"]]
+# Regex 3: Slash commands (/imagine, /image, /draw, /img)
+RE_SLASH_IMAGE = re.compile(
+    r"^\s*/(?:imagine|image|draw|img|paint)\s+(.+?)[.!?]?\s*$",
+    re.IGNORECASE,
+)
 
-COMPILED_KEYWORDS = [
-    re.compile(
-        rf"^\s*(?:can you\s+|could you\s+|please\s+|will you\s+|i want you to\s+|i want an?\s+)*{re.escape(kw)}\s*(?:of|about|for|showing|depicting|with)?\s+(.+)$",
-        re.IGNORECASE,
-    )
-    for kw in IMAGE_GENERATION_CONFIG["keywords"]
-]
+# Regex 4: Noun first (e.g., "image of a cat", "photo of Eiffel tower", "wallpaper showing cyberpunk city")
+RE_NOUN_FIRST = re.compile(
+    rf"^\s*{PREFIX_PATTERN}\s*{NOUNS_PATTERN}\s+(?:{CONNECTORS_PATTERN}\s+)(.+?)[.!?]?\s*$",
+    re.IGNORECASE,
+)
 
-COMPILED_ADDITIONAL = [
-    re.compile(r"^\s*/(?:imagine|image|draw|paint|img)\s+(.+)$", re.IGNORECASE),
-    re.compile(r"^\s*(?:image|picture|photo|illustration|artwork|wallpaper)\s+(?:of|about|showing|with|for)\s+(.+)$", re.IGNORECASE),
-    re.compile(r"^\s*(?:generate|create|render)\s+(.+)\s+(?:image|picture|photo|illustration)$", re.IGNORECASE),
+# Regex 5: Suffix image requests (e.g., "futuristic cyberpunk city in 4k image", "cat riding bicycle picture")
+RE_SUFFIX_IMAGE = re.compile(
+    rf"^\s*(.+?)\s+(?:image|picture|pic|photo|wallpaper|artwork)\s*$",
+    re.IGNORECASE,
+)
+
+# Regex 6: Multilingual Image Generation phrases (Hindi, Tamil, Spanish, French, German)
+RE_MULTILINGUAL = [
+    # Spanish: crea/generar/dibuja una imagen de ...
+    re.compile(r"^\s*(?:por\s+favor\s+)?(?:crea|crear|genera|generar|dibuja|dibujar|haz|hacer)\s+(?:una?\s+)?(?:imagen|foto|dibujo|cuadro)\s+(?:de|para|con|mostrando)\s+(.+?)[.!?]?\s*$", re.IGNORECASE),
+    # French: crée/génère/dessine une image de ...
+    re.compile(r"^\s*(?:s'il\s+vous\s+pla[iî]t\s+)?(?:cr[ée]e|cr[ée]er|g[ée]n[èe]re|g[ée]n[ée]rer|dessine|dessiner)\s+(?:une?\s+)?(?:image|photo|dessin)\s+(?:de|pour|avec|montrant)\s+(.+?)[.!?]?\s*$", re.IGNORECASE),
+    # German: erstelle/generiere/zeichne ein Bild von ...
+    re.compile(r"^\s*(?:bitte\s+)?(?:erstelle|erstellen|generiere|generieren|zeichne|zeichnen)\s+(?:ein\s+)?(?:bild|foto|zeichnung)\s+(?:von|f[uü]r|mit)\s+(.+?)[.!?]?\s*$", re.IGNORECASE),
+    # Hindi: ... ki tasveer banao / tasveer banao ...
+    re.compile(r"^\s*(?:kripya\s+)?(?:tasveer|chitra|photo)\s+(?:banao|banaiye|generate\s+karo)\s+(?:ki\s+|for\s+)?(.+?)[.!?]?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(.+?)\s+ki\s+(?:tasveer|chitra|photo)\s+(?:banao|banaiye|generate\s+karo)[.!?]?\s*$", re.IGNORECASE),
+    # Tamil: ... padam varai / padam uruvaakku ...
+    re.compile(r"^\s*(.+?)\s+(?:padam|photo|picture)\s+(?:varai|varaiyavum|uruvaakku)[.!?]?\s*$", re.IGNORECASE),
 ]
 
 
 def detect_image_prompt(query: str) -> str | None:
     """
-    Checks if a user query matches the defined keywords or patterns for image generation.
-    If yes, extracts and returns the clean prompt for the image generation API.
+    Checks if a user query requests image generation across all natural language variations,
+    keywords, wildcards, connectors, and multi-language expressions.
+    If matched, extracts and returns the clean visual prompt for the image generation API.
     """
-    if not query or len(query.strip()) < 3:
+    if not query or len(query.strip()) < 2:
         return None
     
     q = query.strip()
     
-    # 1. Match specified patterns (with wildcard *)
-    for r in COMPILED_PATTERNS:
-        m = r.match(q)
-        if m and m.group(1).strip():
-            extracted = m.group(1).strip()
-            if len(extracted) >= 2:
-                return extracted
+    # 1. Action + Noun Match (e.g. "Can u create an image for the men behind standing in the train")
+    m = RE_IMAGE_ACTION_NOUN.match(q)
+    if m and m.group(1).strip():
+        res = m.group(1).strip()
+        if len(res) >= 2:
+            return res
 
-    # 2. Match specified keywords
-    for r in COMPILED_KEYWORDS:
-        m = r.match(q)
-        if m and m.group(1).strip():
-            extracted = m.group(1).strip()
-            if len(extracted) >= 2:
-                return extracted
+    # 2. Direct Draw/Paint Match (e.g. "draw an astronaut on Mars")
+    m = RE_DIRECT_DRAW.match(q)
+    if m and m.group(1).strip():
+        res = m.group(1).strip()
+        if len(res) >= 2:
+            return res
 
-    # 3. Match slash commands & additional variations
-    for r in COMPILED_ADDITIONAL:
-        m = r.match(q)
+    # 3. Slash command match (/imagine, /image, /draw)
+    m = RE_SLASH_IMAGE.match(q)
+    if m and m.group(1).strip():
+        res = m.group(1).strip()
+        if len(res) >= 2:
+            return res
+
+    # 4. Noun first match ("image of a dragon flying over city")
+    m = RE_NOUN_FIRST.match(q)
+    if m and m.group(1).strip():
+        res = m.group(1).strip()
+        if len(res) >= 2:
+            return res
+
+    # 5. Multilingual matches (Spanish, French, German, Hindi, Tamil)
+    for pattern in RE_MULTILINGUAL:
+        m = pattern.match(q)
         if m and m.group(1).strip():
-            extracted = m.group(1).strip()
-            if len(extracted) >= 2:
-                return extracted
+            res = m.group(1).strip()
+            if len(res) >= 2:
+                return res
+
+    # 6. Suffix match ("cyberpunk street in rain image")
+    m = RE_SUFFIX_IMAGE.match(q)
+    if m and m.group(1).strip():
+        res = m.group(1).strip()
+        # Avoid false positives for very short single words
+        if len(res.split()) >= 2:
+            return res
 
     return None
-
 
 
 async def generate_image_url(prompt: str) -> dict:
@@ -134,4 +181,3 @@ async def generate_image_url(prompt: str) -> dict:
             "image_url": data_url,
             "content_type": content_type,
         }
-

@@ -5,18 +5,14 @@ import ChatWindow from "./components/ChatWindow.jsx";
 import InputBar from "./components/InputBar.jsx";
 import AuthModal from "./components/AuthModal.jsx";
 import VoiceModeModal from "./components/VoiceModeModal.jsx";
-import MemoryModal from "./components/MemoryModal.jsx";
 import {
   streamChat,
   fetchRemoteConversations,
   syncConversationRemote,
   syncMessagesRemote,
   deleteConversationRemote,
-  fetchRemoteMemories,
-  saveMemoryRemote,
-  deleteMemoryRemote,
 } from "./api.js";
-import { storage, authStorage, memoryStorage } from "./storage.js";
+import { storage, authStorage } from "./storage.js";
 import {
   speakMessage,
   stopSpeech,
@@ -38,8 +34,6 @@ export default function App() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [voiceModeOpen, setVoiceModeOpen] = useState(false);
-  const [memoryModalOpen, setMemoryModalOpen] = useState(false);
-  const [memories, setMemories] = useState([]);
 
   // Text-To-Speech state
   const [speechState, setSpeechState] = useState({
@@ -59,50 +53,12 @@ export default function App() {
     };
   }, []);
 
-  // Load current user, conversations, and memories
+  // Load current user and conversations
   useEffect(() => {
     const activeUser = authStorage.getCurrentUser();
     setUser(activeUser);
     syncConversations(activeUser);
-    syncMemories(activeUser);
   }, []);
-
-  const syncMemories = async (currentUser) => {
-    let localList = memoryStorage.list();
-    setMemories(localList);
-
-    if (currentUser?.email) {
-      try {
-        const remote = await fetchRemoteMemories(currentUser.email);
-        if (remote && remote.length > 0) {
-          memoryStorage.writeAll(remote);
-          setMemories(remote);
-        } else if (localList.length > 0) {
-          for (const m of localList) {
-            await saveMemoryRemote(m, currentUser.email);
-          }
-        }
-      } catch (err) {
-        console.warn("Memories cloud sync note:", err);
-      }
-    }
-  };
-
-  const handleAddMemory = async (content) => {
-    const newMem = memoryStorage.add(content);
-    setMemories(memoryStorage.list());
-    if (user?.email) {
-      await saveMemoryRemote(newMem, user.email);
-    }
-  };
-
-  const handleDeleteMemory = async (memoryId) => {
-    memoryStorage.remove(memoryId);
-    setMemories(memoryStorage.list());
-    if (user?.email) {
-      await deleteMemoryRemote(memoryId);
-    }
-  };
 
 
   const syncConversations = async (currentUser) => {
@@ -598,7 +554,6 @@ export default function App() {
         onLogout={handleLogout}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        onOpenMemory={() => setMemoryModalOpen(true)}
       />
 
       <main className="main-panel">
@@ -615,8 +570,6 @@ export default function App() {
           onLogout={handleLogout}
           onToggleSidebar={() => setSidebarOpen(true)}
           onOpenVoiceMode={() => setVoiceModeOpen(true)}
-          onOpenMemory={() => setMemoryModalOpen(true)}
-          memoryCount={memories.length}
         />
 
         {error && <div className="error-banner">{error}</div>}
@@ -715,15 +668,6 @@ export default function App() {
         onClose={() => setVoiceModeOpen(false)}
         onSendMessage={handleVoiceMessageSend}
         activeConversationTitle={storage.get(activeId)?.title || "Live Voice"}
-      />
-
-      <MemoryModal
-        isOpen={memoryModalOpen}
-        onClose={() => setMemoryModalOpen(false)}
-        memories={memories}
-        onAddMemory={handleAddMemory}
-        onDeleteMemory={handleDeleteMemory}
-        user={user}
       />
     </div>
   );

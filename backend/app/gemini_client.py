@@ -14,27 +14,18 @@ load_dotenv()
 import datetime
 
 
-def get_system_prompt(memories: list[str] | None = None) -> str:
+def get_system_prompt() -> str:
     now_str = datetime.datetime.now().strftime("%A, %B %d, %Y, %H:%M:%S UTC")
-    prompt = (
+    return (
         f"You are a helpful, friendly, and highly intelligent AI assistant (TharikAI).\n"
         f"Format answers with clean Markdown (headings, lists, and fenced code blocks with language tags) "
         f"whenever that improves readability.\n"
         f"Multilingual Intelligence: You speak and understand all global languages fluently. "
         f"Always reply in the EXACT SAME LANGUAGE that the user speaks or writes in (e.g. English, Spanish, French, German, Hindi, Tamil, Telugu, Arabic, Japanese, Chinese, Russian, Italian, Portuguese, Korean, etc.). "
+        f"Image Generation Capability: You have built-in AI image generation features. When asked to create or generate an image, describe what is being rendered or confirm visual generation.\n"
         f"Ensure your tone is natural, conversational, and culturally appropriate.\n"
         f"Current Date and Time: {now_str}.\n"
     )
-    if memories and len(memories) > 0:
-        mem_text = "\n".join(f"- {m}" for m in memories if m.strip())
-        prompt += (
-            f"\n--- USER PERSONAL CONTEXT & MEMORIES ---\n"
-            f"Here are key facts, preferences, and details you remember about this user across sessions:\n"
-            f"{mem_text}\n"
-            f"Use these memories to personalize your answers where relevant.\n"
-            f"--- END OF MEMORIES ---\n"
-        )
-    return prompt
 
 
 
@@ -216,18 +207,17 @@ async def _stream_gemini(
 async def stream_chat_completion(
     messages: list[dict],
     web_search_context: str = "",
-    memories: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Yields text chunks as they arrive from OpenRouter or Google Gemini.
     Automatically detects the provider based on the key format or env vars.
-    Supports Multimodal Vision, Memory injection, and Web Search grounding.
+    Supports Multimodal Vision and Web Search grounding.
     """
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     generic_key = os.getenv("AI_API_KEY", "").strip()
 
-    system_prompt = get_system_prompt(memories=memories)
+    system_prompt = get_system_prompt()
     if web_search_context:
         system_prompt = f"{system_prompt}\n\n{web_search_context}"
 

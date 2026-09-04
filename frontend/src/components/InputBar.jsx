@@ -49,6 +49,37 @@ function mergeTranscriptChunks(chunks) {
   return finalStr;
 }
 
+const STT_LANGUAGES = [
+  { code: "auto", name: "Auto Detect", label: "Auto", flag: "🌐" },
+  { code: "en-US", name: "English (US)", label: "EN", flag: "🇺🇸" },
+  { code: "en-IN", name: "English (India)", label: "EN-IN", flag: "🇮🇳" },
+  { code: "en-GB", name: "English (UK)", label: "EN-GB", flag: "🇬🇧" },
+  { code: "ta-IN", name: "Tamil (தமிழ்)", label: "தமிழ்", flag: "🇮🇳" },
+  { code: "hi-IN", name: "Hindi (हिन्दी)", label: "हिन्दी", flag: "🇮🇳" },
+  { code: "te-IN", name: "Telugu (తెలుగు)", label: "తెలుగు", flag: "🇮🇳" },
+  { code: "kn-IN", name: "Kannada (ಕನ್ನಡ)", label: "ಕನ್ನಡ", flag: "🇮🇳" },
+  { code: "ml-IN", name: "Malayalam (മലയാളം)", label: "മലയാളം", flag: "🇮🇳" },
+  { code: "bn-IN", name: "Bengali (বাংলা)", label: "বাংলা", flag: "🇮🇳" },
+  { code: "mr-IN", name: "Marathi (मराठी)", label: "मराठी", flag: "🇮🇳" },
+  { code: "gu-IN", name: "Gujarati (ગુજરાતી)", label: "ગુજરાતી", flag: "🇮🇳" },
+  { code: "pa-IN", name: "Punjabi (ਪੰਜਾਬੀ)", label: "ਪੰਜਾਬੀ", flag: "🇮🇳" },
+  { code: "ur-IN", name: "Urdu (اردو)", label: "اردو", flag: "🇮🇳" },
+  { code: "es-ES", name: "Spanish (Español)", label: "ES", flag: "🇪🇸" },
+  { code: "fr-FR", name: "French (Français)", label: "FR", flag: "🇫🇷" },
+  { code: "de-DE", name: "German (Deutsch)", label: "DE", flag: "🇩🇪" },
+  { code: "it-IT", name: "Italian (Italiano)", label: "IT", flag: "🇮🇹" },
+  { code: "pt-BR", name: "Portuguese (Português)", label: "PT", flag: "🇧🇷" },
+  { code: "ar-SA", name: "Arabic (العربية)", label: "العربية", flag: "🇸🇦" },
+  { code: "ru-RU", name: "Russian (Русский)", label: "RU", flag: "🇷🇺" },
+  { code: "zh-CN", name: "Chinese (中文)", label: "中文", flag: "🇨🇳" },
+  { code: "ja-JP", name: "Japanese (日本語)", label: "日本語", flag: "🇯🇵" },
+  { code: "ko-KR", name: "Korean (한국어)", label: "한국어", flag: "🇰🇷" },
+  { code: "tr-TR", name: "Turkish (Türkçe)", label: "TR", flag: "🇹🇷" },
+  { code: "id-ID", name: "Indonesian (Bahasa)", label: "ID", flag: "🇮🇩" },
+  { code: "th-TH", name: "Thai (ไทย)", label: "ไทย", flag: "🇹🇭" },
+  { code: "vi-VN", name: "Vietnamese (Tiếng Việt)", label: "VI", flag: "🇻🇳" },
+];
+
 export default function InputBar({
   value,
   onChange,
@@ -59,19 +90,38 @@ export default function InputBar({
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const menuRef = useRef(null);
+  const langMenuRef = useRef(null);
 
   const [attachments, setAttachments] = useState([]);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [langMenuOpen, setLangMenuOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(true);
   const [deepResearchActive, setDeepResearchActive] = useState(false);
+  const [sttLang, setSttLang] = useState(() => {
+    try {
+      return localStorage.getItem("tharik_stt_lang") || "auto";
+    } catch {
+      return "auto";
+    }
+  });
+
   const recognitionRef = useRef(null);
   const baseTextRef = useRef("");
   const valueRef = useRef(value);
+  const sttLangRef = useRef(sttLang);
+  const currentLangObj = STT_LANGUAGES.find((l) => l.code === sttLang) || STT_LANGUAGES[0];
 
   useEffect(() => {
     valueRef.current = value;
   }, [value]);
+
+  useEffect(() => {
+    sttLangRef.current = sttLang;
+    try {
+      localStorage.setItem("tharik_stt_lang", sttLang);
+    } catch {}
+  }, [sttLang]);
 
   // Check Web Speech API availability on mount
   useEffect(() => {
@@ -116,7 +166,14 @@ export default function InputBar({
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = navigator.language || "en-US";
+
+      // Multilingual Speech Recognition Language
+      const activeLang = sttLangRef.current;
+      if (activeLang === "auto") {
+        recognition.lang = navigator.language || "en-US";
+      } else {
+        recognition.lang = activeLang;
+      }
 
       // Save whatever text was already typed before starting voice input
       baseTextRef.current = (valueRef.current || "").trim();
@@ -211,18 +268,33 @@ export default function InputBar({
     }
   };
 
-  // Close menu when clicking outside
+  const handleSelectLanguage = (langCode) => {
+    setSttLang(langCode);
+    sttLangRef.current = langCode;
+    setLangMenuOpen(false);
+    if (isListening) {
+      stopListening();
+      setTimeout(() => {
+        startListening();
+      }, 200);
+    }
+  };
+
+  // Close menus when clicking outside
   useEffect(() => {
     function handleClickOutside(e) {
       if (menuRef.current && !menuRef.current.contains(e.target)) {
         setAttachMenuOpen(false);
       }
+      if (langMenuRef.current && !langMenuRef.current.contains(e.target)) {
+        setLangMenuOpen(false);
+      }
     }
-    if (attachMenuOpen) {
+    if (attachMenuOpen || langMenuOpen) {
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [attachMenuOpen]);
+  }, [attachMenuOpen, langMenuOpen]);
 
   const handleInput = (e) => {
     onChange(e.target.value);
@@ -476,7 +548,7 @@ export default function InputBar({
             rows={1}
             placeholder={
               isListening
-                ? "Listening..."
+                ? `Listening in ${currentLangObj.name}...`
                 : deepResearchActive
                 ? "Ask a deep research question..."
                 : "Message TharikAI..."
@@ -487,16 +559,113 @@ export default function InputBar({
           />
         </div>
 
-        {/* Voice-to-text Microphone Button */}
-        <button
-          type="button"
-          className={`voice-btn ${isListening ? "listening" : ""}`}
-          onClick={toggleListening}
-          aria-label={isListening ? "Stop voice recording" : "Voice to text"}
-          title={isListening ? "Stop voice recording" : "Voice to text (Dictate)"}
-        >
-          {isListening ? <MicOffIcon /> : <MicIcon />}
-        </button>
+        {/* Multilingual Voice-to-Text Controls */}
+        <div className="voice-stt-wrapper" style={{ position: "relative", display: "flex", alignItems: "center" }}>
+          {/* STT Language Picker Popup Menu */}
+          {langMenuOpen && (
+            <div
+              className="stt-lang-popup-menu"
+              ref={langMenuRef}
+              style={{
+                position: "absolute",
+                bottom: "calc(100% + 10px)",
+                right: "0",
+                background: "rgba(22, 27, 34, 0.96)",
+                backdropFilter: "blur(18px)",
+                border: "1px solid rgba(255, 255, 255, 0.12)",
+                borderRadius: "14px",
+                padding: "8px",
+                boxShadow: "0 16px 36px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4)",
+                zIndex: 50,
+                width: "240px",
+                maxHeight: "300px",
+                overflowY: "auto",
+              }}
+            >
+              <div style={{ padding: "4px 8px 8px 8px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "4px" }}>
+                <span style={{ fontSize: "11px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.06em", color: "#94a3b8" }}>
+                  Speech Language (Voice to Text)
+                </span>
+              </div>
+              <div className="stt-lang-list" style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                {STT_LANGUAGES.map((l) => {
+                  const isSelected = sttLang === l.code;
+                  return (
+                    <button
+                      key={l.code}
+                      type="button"
+                      onClick={() => handleSelectLanguage(l.code)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "7px 10px",
+                        borderRadius: "8px",
+                        background: isSelected ? "rgba(56, 189, 248, 0.15)" : "transparent",
+                        color: isSelected ? "#38bdf8" : "#e2e8f0",
+                        border: isSelected ? "1px solid rgba(56, 189, 248, 0.3)" : "none",
+                        fontSize: "12.5px",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span>{l.flag}</span>
+                        <span>{l.name}</span>
+                      </span>
+                      {isSelected && <span style={{ fontSize: "12px", color: "#38bdf8" }}>✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Voice-to-text Microphone Button */}
+          <button
+            type="button"
+            className={`voice-btn ${isListening ? "listening" : ""}`}
+            onClick={toggleListening}
+            aria-label={isListening ? "Stop voice recording" : "Voice to text"}
+            title={
+              isListening
+                ? `Listening in ${currentLangObj.name}... Click to stop`
+                : `Voice to text (${currentLangObj.name})`
+            }
+          >
+            {isListening ? <MicOffIcon /> : <MicIcon />}
+          </button>
+
+          {/* Voice STT Language Badge Selector */}
+          <button
+            type="button"
+            className={`stt-lang-badge-btn ${langMenuOpen ? "active" : ""}`}
+            onClick={() => setLangMenuOpen(!langMenuOpen)}
+            title={`Speech Language: ${currentLangObj.name}. Click to change language.`}
+            aria-label="Change voice-to-text language"
+            style={{
+              background: "rgba(255, 255, 255, 0.07)",
+              border: "1px solid rgba(255, 255, 255, 0.12)",
+              color: "#94a3b8",
+              borderRadius: "10px",
+              padding: "2px 6px",
+              fontSize: "11px",
+              fontWeight: "500",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "3px",
+              height: "22px",
+              marginLeft: "2px",
+              marginRight: "4px",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <span style={{ fontSize: "11px" }}>{currentLangObj.flag}</span>
+            <span style={{ fontSize: "10.5px", fontWeight: "600" }}>{currentLangObj.label}</span>
+          </button>
+        </div>
 
 
         {/* Dynamic Action Button: Voice icon when empty, Send icon when typing */}
