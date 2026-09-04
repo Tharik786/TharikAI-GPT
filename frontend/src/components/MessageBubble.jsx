@@ -450,6 +450,13 @@ const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ..
   const [error, setError] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
 
+  useEffect(() => {
+    if (src) {
+      setError(false);
+      setLoaded(false);
+    }
+  }, [src]);
+
   const handleDownload = async (e) => {
     e.stopPropagation();
     try {
@@ -649,6 +656,7 @@ function MessageBubble({
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={MARKDOWN_COMPONENTS}
+              urlTransform={(url) => url}
             >
               {cleanText}
             </ReactMarkdown>
