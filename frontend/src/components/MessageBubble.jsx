@@ -510,21 +510,25 @@ const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ..
             <span>Unable to render image</span>
           </div>
         )}
-        <img
-          src={cleanSrc}
-          alt={alt || "AI Generated Artwork"}
-          className={`generated-ai-img ${loaded ? "is-loaded" : "is-loading"}`}
-          onLoad={() => {
-            setLoaded(true);
-            setError(false);
-          }}
-          onError={() => {
-            setError(true);
-          }}
-          loading="eager"
-          decoding="async"
-          {...props}
-        />
+        {cleanSrc && cleanSrc.length >= 20 && (
+          <img
+            src={cleanSrc}
+            alt={alt || "AI Generated Artwork"}
+            className={`generated-ai-img ${loaded ? "is-loaded" : "is-loading"}`}
+            onLoad={() => {
+              setLoaded(true);
+              setError(false);
+            }}
+            onError={() => {
+              if (cleanSrc && cleanSrc.length >= 50) {
+                setError(true);
+              }
+            }}
+            loading="eager"
+            decoding="async"
+            {...props}
+          />
+        )}
         {loaded && (
           <div className="image-overlay-actions">
             <button
