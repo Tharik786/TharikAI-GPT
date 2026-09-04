@@ -216,8 +216,14 @@ export function detectTextLanguage(text = "") {
   if (/[\u0E00-\u0E7F]/.test(str)) return "th"; // Thai
   if (/[\u0370-\u03FF]/.test(str)) return "el"; // Greek
 
-  // 2. Common Latin-based language word checks
+  // 2. Common Latin-based language and transliteration checks
   const lower = " " + str.toLowerCase() + " ";
+
+  // Transliterated Tamil / Hindi / Indian languages
+  if (/\b(vanakkam|eppadi|nandri|irukinga|enna|sollunga|ungalukku|thambi|akka|seri|aama|illa)\b/i.test(lower)) return "ta";
+  if (/\b(namaste|kaise|kya|batao|dhanyawad|shukriya|accha|theek|bhai|aapka|mera|hai|hain)\b/i.test(lower)) return "hi";
+
+  // European & Global Languages
   if (/\b(el|la|los|las|un|una|hola|gracias|cómo|por favor|es|son|de|en|que|para)\b/.test(lower)) return "es"; // Spanish
   if (/\b(le|la|les|un|une|bonjour|merci|comment|s'il vous plaît|est|sont|de|en|que|pour)\b/.test(lower)) return "fr"; // French
   if (/\b(der|die|das|ein|eine|hallo|danke|wie|bitte|ist|sind|von|in|dass|für)\b/.test(lower)) return "de"; // German
@@ -225,6 +231,7 @@ export function detectTextLanguage(text = "") {
   if (/\b(o|a|os|as|um|uma|olá|obrigado|como|por favor|é|são|de|em|que|para)\b/.test(lower)) return "pt"; // Portuguese
   if (/\b(bir|bu|ve|için|merhaba|teşekkürler|nasıl|lütfen|mi|mu)\b/.test(lower)) return "tr"; // Turkish
   if (/\b(yang|dan|di|ini|itu|halo|terima kasih|bagaimana|tolong|adalah)\b/.test(lower)) return "id"; // Indonesian
+  if (/\b(marhaban|shukran|ahlan|kayfa|hal|kayf|salam)\b/i.test(lower)) return "ar"; // Arabic transliteration
 
   return "en";
 }

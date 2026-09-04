@@ -87,7 +87,7 @@ export default function VoiceModeModal({
       const rec = new SpeechRec();
       rec.continuous = true;
       rec.interimResults = true;
-      rec.lang = navigator.language || "en-US";
+      rec.lang = "en-US";
 
       rec.onstart = () => {
         isListeningRef.current = true;

@@ -116,7 +116,7 @@ export default function InputBar({
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = navigator.language || "en-US";
+      recognition.lang = "en-US";
 
       // Save whatever text was already typed before starting voice input
       baseTextRef.current = (valueRef.current || "").trim();
