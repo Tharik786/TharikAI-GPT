@@ -148,7 +148,75 @@ export function getAvailableVoices() {
 }
 
 /**
- * Find the best natural English voice available in the client browser
+ * Detect language script and language family from text
+ */
+export function detectTextLanguage(text = "") {
+  if (!text || typeof text !== "string") return "en";
+  const str = text.trim();
+
+  // 1. Script-based Unicode detection
+  if (/[\u0B80-\u0BFF]/.test(str)) return "ta"; // Tamil
+  if (/[\u0900-\u097F]/.test(str)) return "hi"; // Hindi / Devanagari
+  if (/[\u0C00-\u0C7F]/.test(str)) return "te"; // Telugu
+  if (/[\u0C80-\u0CFF]/.test(str)) return "kn"; // Kannada
+  if (/[\u0D00-\u0D7F]/.test(str)) return "ml"; // Malayalam
+  if (/[\u0980-\u09FF]/.test(str)) return "bn"; // Bengali
+  if (/[\u0600-\u06FF]/.test(str)) return "ar"; // Arabic / Urdu
+  if (/[\u3040-\u30FF]/.test(str)) return "ja"; // Japanese Hiragana/Katakana
+  if (/[\u4E00-\u9FFF]/.test(str)) return "zh"; // Chinese
+  if (/[\uAC00-\uD7AF]/.test(str)) return "ko"; // Korean
+  if (/[\u0400-\u04FF]/.test(str)) return "ru"; // Russian / Cyrillic
+  if (/[\u0E00-\u0E7F]/.test(str)) return "th"; // Thai
+  if (/[\u0370-\u03FF]/.test(str)) return "el"; // Greek
+
+  // 2. Common Latin-based language word checks
+  const lower = " " + str.toLowerCase() + " ";
+  if (/\b(el|la|los|las|un|una|hola|gracias|cómo|por favor|es|son|de|en|que|para)\b/.test(lower)) return "es"; // Spanish
+  if (/\b(le|la|les|un|une|bonjour|merci|comment|s'il vous plaît|est|sont|de|en|que|pour)\b/.test(lower)) return "fr"; // French
+  if (/\b(der|die|das|ein|eine|hallo|danke|wie|bitte|ist|sind|von|in|dass|für)\b/.test(lower)) return "de"; // German
+  if (/\b(il|la|i|gli|le|un|una|ciao|grazie|come|per favore|è|sono|di|in|che|per)\b/.test(lower)) return "it"; // Italian
+  if (/\b(o|a|os|as|um|uma|olá|obrigado|como|por favor|é|são|de|em|que|para)\b/.test(lower)) return "pt"; // Portuguese
+  if (/\b(bir|bu|ve|için|merhaba|teşekkürler|nasıl|lütfen|mi|mu)\b/.test(lower)) return "tr"; // Turkish
+  if (/\b(yang|dan|di|ini|itu|halo|terima kasih|bagaimana|tolong|adalah)\b/.test(lower)) return "id"; // Indonesian
+
+  return "en";
+}
+
+/**
+ * Find the best natural voice matching the specified language
+ */
+export function getBestVoiceForLanguage(langCode = "en", preferredVoiceURI = null) {
+  if (!isSpeechSupported()) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices || voices.length === 0) return null;
+
+  // 1. If explicit preferred voice URI is requested and matches language
+  if (preferredVoiceURI) {
+    const matchedURI = voices.find((v) => v.voiceURI === preferredVoiceURI);
+    if (matchedURI) return matchedURI;
+  }
+
+  // 2. Filter voices by language code prefix (e.g. 'ta', 'hi', 'es', 'fr', 'en')
+  const langVoices = voices.filter(
+    (v) => v.lang && (v.lang.toLowerCase().startsWith(langCode.toLowerCase()) || v.lang.toLowerCase().replace("_", "-").startsWith(langCode.toLowerCase()))
+  );
+
+  if (langVoices.length > 0) {
+    // Priority order for natural / neural / Google / Microsoft voices in this language
+    const preferredKeywords = ["natural", "neural", "google", "online", "premium", "enhanced"];
+    for (const kw of preferredKeywords) {
+      const best = langVoices.find((v) => v.name.toLowerCase().includes(kw));
+      if (best) return best;
+    }
+    return langVoices[0];
+  }
+
+  // 3. Fallback to general getBestVoice
+  return getBestVoice();
+}
+
+/**
+ * Find the best natural voice available in the client browser
  */
 export function getBestVoice() {
   if (!isSpeechSupported()) return null;
@@ -184,6 +252,7 @@ export function getBestVoice() {
 
   return voices[0] || null;
 }
+
 
 /**
  * Stop any active speech immediately
@@ -264,7 +333,8 @@ export function speakMessage(messageId, text, options = {}) {
   isPaused = false;
   notifyListeners();
 
-  const voice = options.voice || getBestVoice();
+  const detectedLang = options.lang || detectTextLanguage(cleaned);
+  const voice = options.voice || getBestVoiceForLanguage(detectedLang, options.voiceURI) || getBestVoice();
   const rate = options.rate || currentRate;
 
   let chunkIndex = 0;

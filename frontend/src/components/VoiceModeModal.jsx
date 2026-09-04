@@ -4,8 +4,35 @@ import {
   stopSpeech,
   cleanTextForSpeech,
   getAvailableVoices,
+  detectTextLanguage,
+  getBestVoiceForLanguage,
   isSpeechSupported,
 } from "../utils/speechService";
+
+const SUPPORTED_LANGUAGES = [
+  { code: "auto", name: "🌐 Auto Detect (All Languages)" },
+  { code: "en-US", name: "🇺🇸 English (US)" },
+  { code: "en-GB", name: "🇬🇧 English (UK)" },
+  { code: "en-IN", name: "🇮🇳 English (India)" },
+  { code: "ta-IN", name: "🇮🇳 Tamil (தமிழ்)" },
+  { code: "hi-IN", name: "🇮🇳 Hindi (हिन्दी)" },
+  { code: "te-IN", name: "🇮🇳 Telugu (తెలుగు)" },
+  { code: "kn-IN", name: "🇮🇳 Kannada (ಕನ್ನಡ)" },
+  { code: "ml-IN", name: "🇮🇳 Malayalam (മലയാളം)" },
+  { code: "bn-IN", name: "🇮🇳 Bengali (বাংলা)" },
+  { code: "es-ES", name: "🇪🇸 Spanish (Español)" },
+  { code: "fr-FR", name: "🇫🇷 French (Français)" },
+  { code: "de-DE", name: "🇩🇪 German (Deutsch)" },
+  { code: "it-IT", name: "🇮🇹 Italian (Italiano)" },
+  { code: "pt-BR", name: "🇧🇷 Portuguese (Português)" },
+  { code: "ar-SA", name: "🇸🇦 Arabic (العربية)" },
+  { code: "ru-RU", name: "🇷🇺 Russian (Русский)" },
+  { code: "zh-CN", name: "🇨🇳 Chinese (中文)" },
+  { code: "ja-JP", name: "🇯🇵 Japanese (日本語)" },
+  { code: "ko-KR", name: "🇰🇷 Korean (한국어)" },
+  { code: "tr-TR", name: "🇹🇷 Turkish (Türkçe)" },
+  { code: "id-ID", name: "🇮🇩 Indonesian (Bahasa)" },
+];
 
 export default function VoiceModeModal({
   isOpen,
@@ -17,6 +44,7 @@ export default function VoiceModeModal({
   const [userTranscript, setUserTranscript] = useState("");
   const [aiTranscript, setAiTranscript] = useState("");
   const [isMuted, setIsMuted] = useState(false);
+  const [selectedLang, setSelectedLang] = useState("auto");
   const [voiceList, setVoiceList] = useState([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState("");
   const [speechRate, setSpeechRate] = useState(1.05);
@@ -26,33 +54,24 @@ export default function VoiceModeModal({
   const isListeningRef = useRef(false);
   const statusRef = useRef(status);
   const isMutedRef = useRef(isMuted);
+  const selectedLangRef = useRef(selectedLang);
 
   statusRef.current = status;
   isMutedRef.current = isMuted;
+  selectedLangRef.current = selectedLang;
 
-  // Load voices on mount
+  // Load browser voices on mount
   useEffect(() => {
     const loadVoices = () => {
       const v = getAvailableVoices();
       setVoiceList(v);
-      if (v.length > 0 && !selectedVoiceURI) {
-        // Pick best natural sounding English voice
-        const pref = v.find(
-          (item) =>
-            item.name.toLowerCase().includes("natural") ||
-            item.name.toLowerCase().includes("neural") ||
-            item.name.toLowerCase().includes("google") ||
-            item.name.toLowerCase().includes("samantha")
-        ) || v[0];
-        if (pref) setSelectedVoiceURI(pref.voiceURI);
-      }
     };
 
     loadVoices();
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.onvoiceschanged = loadVoices;
     }
-  }, [selectedVoiceURI]);
+  }, []);
 
   // Cleanup on unmount or close
   useEffect(() => {
@@ -89,7 +108,14 @@ export default function VoiceModeModal({
       const rec = new SpeechRec();
       rec.continuous = true;
       rec.interimResults = true;
-      rec.lang = "en-US";
+
+      // Bind speech recognition language dynamically
+      const activeLang = selectedLangRef.current;
+      if (activeLang === "auto") {
+        rec.lang = navigator.language || "en-US";
+      } else {
+        rec.lang = activeLang;
+      }
 
       rec.onstart = () => {
         isListeningRef.current = true;
@@ -116,7 +142,7 @@ export default function VoiceModeModal({
           // Reset silence timer on every new speech event
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = setTimeout(() => {
-            // User paused speaking for 1.2s -> submit voice turn!
+            // User paused speaking for 1.2s -> submit voice turn
             if (isListeningRef.current && currentText.length >= 2) {
               handleVoiceSubmit(currentText);
             }
@@ -167,10 +193,9 @@ export default function VoiceModeModal({
     if (!promptText || promptText.trim().length === 0) return;
     stopListening();
     setStatus("thinking");
-    setAiTranscript("Searching and thinking...");
+    setAiTranscript("Thinking and processing in your language...");
 
     let accumulatedText = "";
-    let isSpoken = false;
 
     try {
       await onSendMessage(
@@ -181,16 +206,20 @@ export default function VoiceModeModal({
             setAiTranscript(accumulatedText);
           },
           onDone: () => {
-            // Once full response has arrived, speak it aloud smoothly
+            // Once full response has arrived, speak it aloud in the detected/spoken language
             setStatus("speaking");
             const cleanText = cleanTextForSpeech(accumulatedText);
-            const voice = voiceList.find((v) => v.voiceURI === selectedVoiceURI);
+            
+            // Detect the language of the AI's response to pick the matching native voice
+            const detectedLang = detectTextLanguage(cleanText);
+            const nativeVoice = getBestVoiceForLanguage(detectedLang, selectedVoiceURI);
 
             speakMessage(`voice-mode-${Date.now()}`, cleanText, {
-              voice,
+              voice: nativeVoice,
+              lang: detectedLang,
               rate: speechRate,
               onEnd: () => {
-                // Speech ended -> automatically resume listening loop!
+                // Speech ended -> automatically resume listening loop
                 if (!isMutedRef.current) {
                   setUserTranscript("");
                   setAiTranscript("");
@@ -202,7 +231,6 @@ export default function VoiceModeModal({
                 }
               },
             });
-            isSpoken = true;
           },
           onError: (err) => {
             setStatus("idle");
@@ -244,6 +272,18 @@ export default function VoiceModeModal({
     }
   };
 
+  // Switch Language
+  const handleLanguageChange = (langCode) => {
+    setSelectedLang(langCode);
+    selectedLangRef.current = langCode;
+    stopListening();
+    if (!isMuted) {
+      setTimeout(() => {
+        startListening();
+      }, 300);
+    }
+  };
+
   // Start listening automatically when modal opens
   useEffect(() => {
     if (isOpen && !isMuted) {
@@ -262,15 +302,52 @@ export default function VoiceModeModal({
       <div className={`voice-ambient-glow glow-${status}`} />
 
       <div className="voice-modal-container">
-        {/* Top Close Button */}
-        <div className="voice-modal-header">
-          <div />
+        {/* Top Controls: Language Switcher + Close Button */}
+        <div className="voice-modal-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "16px 24px" }}>
+          <div className="voice-lang-selector-wrapper" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <select
+              value={selectedLang}
+              onChange={(e) => handleLanguageChange(e.target.value)}
+              className="voice-lang-dropdown"
+              style={{
+                background: "rgba(255, 255, 255, 0.08)",
+                color: "#e2e8f0",
+                border: "1px solid rgba(255, 255, 255, 0.15)",
+                borderRadius: "20px",
+                padding: "6px 14px",
+                fontSize: "13px",
+                fontWeight: "500",
+                cursor: "pointer",
+                backdropFilter: "blur(10px)",
+                outline: "none",
+              }}
+            >
+              {SUPPORTED_LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code} style={{ background: "#1e293b", color: "#f8fafc" }}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <button
             type="button"
             className="voice-close-btn"
             onClick={onClose}
             title="Exit voice mode"
             aria-label="Exit voice mode"
+            style={{
+              background: "rgba(255, 255, 255, 0.08)",
+              border: "1px solid rgba(255, 255, 255, 0.12)",
+              color: "#94a3b8",
+              borderRadius: "50%",
+              width: "36px",
+              height: "36px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+            }}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />
@@ -279,12 +356,13 @@ export default function VoiceModeModal({
           </button>
         </div>
 
-        {/* Central Voice Orb & Soundwaves */}
+        {/* Central Voice Orb & Dynamic Visualizer */}
         <div className="voice-orb-section">
           <div
             className={`voice-orb-wrapper orb-state-${status}`}
             onClick={status === "speaking" ? handleInterrupt : undefined}
             title={status === "speaking" ? "Click orb to interrupt" : "Voice Agent Active"}
+            style={{ cursor: status === "speaking" ? "pointer" : "default" }}
           >
             {/* Pulsing Ripple Rings */}
             <div className="orb-ring ring-1" />
@@ -319,19 +397,30 @@ export default function VoiceModeModal({
                   </svg>
                 </div>
               )}
+
+              {status === "muted" && (
+                <div className="orb-muted-icon" style={{ color: "#ef4444" }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="1" y1="1" x2="23" y2="23" />
+                    <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6" />
+                    <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+                    <line x1="12" y1="19" x2="12" y2="22" />
+                  </svg>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Status Label */}
+          {/* Dynamic Status Pill */}
           <div className="voice-status-pill">
             {status === "listening" && (
-              <span className="status-listening-text">Listening to you...</span>
+              <span className="status-listening-text">Listening in any language...</span>
             )}
             {status === "thinking" && (
-              <span className="status-thinking-text">Thinking & searching...</span>
+              <span className="status-thinking-text">Thinking & translating...</span>
             )}
             {status === "speaking" && (
-              <span className="status-speaking-text">Speaking (Tap to interrupt)</span>
+              <span className="status-speaking-text">Speaking in your language (Tap orb to interrupt)</span>
             )}
             {status === "muted" && (
               <span className="status-muted-text">Microphone Muted</span>
@@ -340,6 +429,115 @@ export default function VoiceModeModal({
               <span className="status-idle-text">Ready</span>
             )}
           </div>
+        </div>
+
+        {/* Live Multilingual Transcripts Box */}
+        <div
+          className="voice-transcript-container"
+          style={{
+            maxWidth: "600px",
+            width: "90%",
+            margin: "24px auto 16px auto",
+            minHeight: "80px",
+            background: "rgba(15, 23, 42, 0.65)",
+            border: "1px solid rgba(255, 255, 255, 0.08)",
+            borderRadius: "16px",
+            padding: "16px 20px",
+            backdropFilter: "blur(12px)",
+            textAlign: "center",
+          }}
+        >
+          {userTranscript && (
+            <p style={{ color: "#38bdf8", fontSize: "15px", fontWeight: "500", margin: "0 0 8px 0" }}>
+              <span style={{ opacity: 0.6, fontSize: "12px", display: "block", textTransform: "uppercase", letterSpacing: "0.05em" }}>You spoke:</span>
+              "{userTranscript}"
+            </p>
+          )}
+
+          {aiTranscript && status !== "idle" && (
+            <p style={{ color: "#f1f5f9", fontSize: "14px", lineHeight: "1.5", margin: 0, opacity: 0.9 }}>
+              {aiTranscript}
+            </p>
+          )}
+
+          {!userTranscript && !aiTranscript && (
+            <p style={{ color: "#64748b", fontSize: "13px", margin: 0 }}>
+              Speak naturally in any language (English, Tamil, Hindi, Spanish, French, etc.)
+            </p>
+          )}
+        </div>
+
+        {/* Bottom Floating Control Bar */}
+        <div
+          className="voice-bottom-controls"
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: "16px",
+            padding: "16px 0 24px 0",
+          }}
+        >
+          <button
+            type="button"
+            onClick={toggleMute}
+            className={`voice-action-btn ${isMuted ? "btn-muted" : ""}`}
+            style={{
+              background: isMuted ? "rgba(239, 68, 68, 0.2)" : "rgba(255, 255, 255, 0.1)",
+              border: `1px solid ${isMuted ? "rgba(239, 68, 68, 0.4)" : "rgba(255, 255, 255, 0.15)"}`,
+              color: isMuted ? "#ef4444" : "#f8fafc",
+              padding: "10px 18px",
+              borderRadius: "24px",
+              fontSize: "13px",
+              fontWeight: "500",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              transition: "all 0.2s ease",
+            }}
+          >
+            {isMuted ? "Unmute Mic" : "Mute Mic"}
+          </button>
+
+          {status === "speaking" && (
+            <button
+              type="button"
+              onClick={handleInterrupt}
+              style={{
+                background: "rgba(245, 158, 11, 0.2)",
+                border: "1px solid rgba(245, 158, 11, 0.4)",
+                color: "#fbbf24",
+                padding: "10px 18px",
+                borderRadius: "24px",
+                fontSize: "13px",
+                fontWeight: "500",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
+              Interrupt & Speak
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: "rgba(255, 255, 255, 0.06)",
+              border: "1px solid rgba(255, 255, 255, 0.1)",
+              color: "#94a3b8",
+              padding: "10px 18px",
+              borderRadius: "24px",
+              fontSize: "13px",
+              fontWeight: "500",
+              cursor: "pointer",
+            }}
+          >
+            End Voice Call
+          </button>
         </div>
       </div>
     </div>

@@ -166,3 +166,81 @@ def format_search_context(search_data: dict) -> str:
     )
 
     return "\n".join(lines)
+
+
+async def run_deep_research(query: str) -> dict:
+    """
+    Executes a comprehensive multi-step deep research process:
+    1. Breaks the query into sub-topic search queries.
+    2. Searches multiple sources in parallel.
+    3. Aggregates and dedupes sources.
+    """
+    clean_query = query.strip()
+    # Generate 3 focused sub-queries based on query aspects
+    sub_queries = [
+        clean_query,
+        f"{clean_query} comprehensive overview analysis details",
+        f"{clean_query} latest developments key insights comparison",
+    ]
+
+    all_results = []
+    seen_urls = set()
+    answers = []
+
+    import asyncio
+    tasks = [search_tavily(sq, max_results=4) for sq in sub_queries]
+    responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for resp in responses:
+        if isinstance(resp, dict) and resp.get("success"):
+            if resp.get("answer"):
+                answers.append(resp["answer"])
+            for item in resp.get("results", []):
+                url = item.get("url")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    all_results.append(item)
+
+    return {
+        "success": True,
+        "query": clean_query,
+        "sub_queries": sub_queries,
+        "answers": answers,
+        "results": all_results[:10],
+    }
+
+
+def format_deep_research_context(research_data: dict) -> str:
+    """
+    Formats multi-source deep research into a comprehensive system prompt injection.
+    """
+    if not research_data or not research_data.get("success"):
+        return ""
+
+    results = research_data.get("results", [])
+    query = research_data.get("query", "")
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    lines = [
+        f"--- DEEP MULTI-SOURCE RESEARCH REPORT CONTEXT FOR: '{query}' ---",
+        f"Timestamp: {now_str}",
+        f"Sources Analyzed: {len(results)} distinct authoritative web pages",
+        "\nComprehensive Sources & Extracted Findings:",
+    ]
+
+    for idx, r in enumerate(results, 1):
+        lines.append(f"[{idx}] {r['title']} ({r.get('domain', '')})")
+        lines.append(f"URL: {r['url']}")
+        lines.append(f"Content:\n{r['content']}\n")
+
+    lines.append(
+        "CRITICAL INSTRUCTIONS FOR DEEP RESEARCH ASSISTANT:\n"
+        "- Synthesize an exhaustive, authoritative, deeply structured research report on the topic.\n"
+        "- Use Markdown formatting with clear section headers (## Executive Summary, ## In-Depth Analysis, ## Key Findings / Data Table, ## Implications & Next Steps).\n"
+        "- Cite every major factual claim using numbered inline markdown links e.g. [[1]](URL).\n"
+        "- Provide clear nuance, pros/cons, and analytical depth.\n"
+        "--- END OF DEEP RESEARCH CONTEXT ---"
+    )
+
+    return "\n".join(lines)
+

@@ -117,6 +117,10 @@ export const authStorage = {
     }
   },
 
+  clearCurrentUser() {
+    localStorage.removeItem(CURRENT_USER_KEY);
+  },
+
   logout() {
     localStorage.removeItem(CURRENT_USER_KEY);
   },
@@ -128,4 +132,53 @@ export const authStorage = {
     return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
   },
 };
+
+// Helper for memory key
+function getMemoriesKey() {
+  const user = authStorage.getCurrentUser();
+  return user ? `open-chat:memories:${user.email.toLowerCase()}` : "open-chat:memories:guest";
+}
+
+export const memoryStorage = {
+  list() {
+    try {
+      const raw = localStorage.getItem(getMemoriesKey());
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  writeAll(memories) {
+    try {
+      localStorage.setItem(getMemoriesKey(), JSON.stringify(memories));
+    } catch (e) {
+      console.error("Failed to save memories to localStorage:", e);
+    }
+  },
+
+  add(content, id = null) {
+    const list = this.list();
+    const memId = id || `mem-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const newMem = {
+      id: memId,
+      content: content.trim(),
+      createdAt: Date.now(),
+    };
+    const updated = [newMem, ...list.filter((m) => m.content !== newMem.content)];
+    this.writeAll(updated);
+    return newMem;
+  },
+
+  remove(id) {
+    const list = this.list();
+    const updated = list.filter((m) => m.id !== id);
+    this.writeAll(updated);
+  },
+
+  clear() {
+    localStorage.removeItem(getMemoriesKey());
+  },
+};
+
 

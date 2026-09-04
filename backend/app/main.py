@@ -22,7 +22,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.gemini_client import stream_chat_completion, GeminiError
-from app.tavily_client import search_tavily, format_search_context, should_auto_search
+from app.tavily_client import (
+    search_tavily,
+    format_search_context,
+    should_auto_search,
+    run_deep_research,
+    format_deep_research_context,
+)
 from app.image_client import detect_image_prompt, generate_image_url
 from app.db import (
     init_db,
@@ -33,6 +39,9 @@ from app.db import (
     save_conversation,
     set_messages as db_set_messages,
     delete_conversation as db_delete_conversation,
+    get_user_memories,
+    add_user_memory,
+    delete_user_memory,
 )
 
 
@@ -68,16 +77,29 @@ else:
 class ChatMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str
+    images: list[dict | str] | None = None
 
 
 class ChatBody(BaseModel):
     messages: list[ChatMessage]
     web_search: bool | None = False
+    deep_research: bool | None = False
+    email: str | None = None
 
 
 class SearchBody(BaseModel):
     query: str
     max_results: int | None = 5
+
+
+class ResearchBody(BaseModel):
+    query: str
+
+
+class MemoryCreateBody(BaseModel):
+    email: str
+    content: str
+    id: str | None = None
 
 
 class RegisterBody(BaseModel):
@@ -103,6 +125,7 @@ class MessagesBody(BaseModel):
     id: str
     messages: list[dict]
     updatedAt: int
+
 
 
 @app.api_route("/", methods=["GET", "HEAD"])
@@ -231,6 +254,48 @@ async def extract_document(file: UploadFile = File(...)):
     }
 
 
+@app.get("/api/memories")
+async def get_memories_endpoint(email: str):
+    """
+    Fetch long-term memories for the given user.
+    """
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    memories = get_user_memories(email)
+    return {"success": True, "memories": memories}
+
+
+@app.post("/api/memories")
+async def add_memory_endpoint(body: MemoryCreateBody):
+    """
+    Create or update a long-term user memory fact.
+    """
+    if not body.email or not body.content.strip():
+        raise HTTPException(status_code=400, detail="Email and content are required")
+    mem = add_user_memory(body.email, body.content, memory_id=body.id)
+    return {"success": True, "memory": mem}
+
+
+@app.delete("/api/memories/{memory_id}")
+async def delete_memory_endpoint(memory_id: str):
+    """
+    Delete a specific user memory fact.
+    """
+    delete_user_memory(memory_id)
+    return {"success": True}
+
+
+@app.post("/api/research")
+async def deep_research_endpoint(body: ResearchBody):
+    """
+    Dedicated multi-source deep research query endpoint.
+    """
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    data = await run_deep_research(body.query.strip())
+    return data
+
+
 @app.post("/api/search")
 async def search_endpoint(body: SearchBody):
     """
@@ -252,49 +317,84 @@ class ImageBody(BaseModel):
 @app.post("/api/image")
 async def image_endpoint(body: ImageBody):
     """
-    Direct AI image generation endpoint powered by Pollinations Flux.
+    Direct AI image generation endpoint powered by Cloudflare Worker Image API.
     """
     if not body.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    return generate_image_url(
-        body.prompt.strip(),
-        width=body.width or 1024,
-        height=body.height or 1024,
-        model=body.model or "flux",
-    )
+    return await generate_image_url(body.prompt.strip())
 
 
 @app.post("/api/chat")
 async def chat(body: ChatBody):
+
     """
-    Fully stateless: the client sends the whole conversation (all prior
-    messages) on every request, and this endpoint streams back the next
-    assistant reply. Nothing is stored on the server -- the browser is
-    the only place history lives (see frontend/src/storage.js).
-    Supports real-time web search and AI image generation.
+    Unified streaming endpoint:
+    - Multimodal vision (image input)
+    - Real-time Web Search and Deep Multi-Source Research
+    - Cross-chat Long-Term Memory recall
+    - AI Image Generation (Cloudflare Worker)
     """
     if not body.messages:
         raise HTTPException(status_code=400, detail="messages cannot be empty")
 
-    llm_messages = [{"role": m.role, "content": m.content} for m in body.messages]
+    llm_messages = []
+    for m in body.messages:
+        msg_dict = {"role": m.role, "content": m.content}
+        if m.images:
+            msg_dict["images"] = m.images
+        llm_messages.append(msg_dict)
 
-    # Find the latest user query
+    # Find the latest user message
     last_user_msg = next((m.content for m in reversed(body.messages) if m.role == "user"), "")
-    # Clean up file extraction text tags from query for web search
     clean_search_query = last_user_msg.split("--- Document Attached:")[0].split("[Attached image:")[0].strip()
 
-    # Detect if the user is asking to generate an AI image
-    image_prompt = detect_image_prompt(clean_search_query)
+    # Detect if user requested deep research
+    is_deep_research = bool(
+        body.deep_research
+        or clean_search_query.lower().startswith("/research")
+        or clean_search_query.lower().startswith("deep research:")
+    )
+    if clean_search_query.lower().startswith("/research"):
+        clean_search_query = clean_search_query[9:].strip()
 
-    # Only perform web search for time-sensitive / real-time queries for immediate AI response speed
-    perform_search = should_auto_search(clean_search_query) if not image_prompt else False
+    # Detect if user is asking to generate an AI image
+    image_prompt = detect_image_prompt(clean_search_query) if not is_deep_research else None
+
+    # Load user memories if logged in
+    user_memories = []
+    if body.email:
+        try:
+            mems = get_user_memories(body.email)
+            user_memories = [m["content"] for m in mems if m.get("content")]
+        except Exception as e:
+            print(f"Non-blocking memory fetch note: {e}")
+
+    # Auto-extract and save explicit memory statements (e.g., "remember that ...", "my name is ...")
+    if body.email and clean_search_query:
+        import re
+        rem_match = re.search(r"\b(?:remember\s+(?:that\s+)?|note\s+that\s+)(.+)", clean_search_query, re.IGNORECASE)
+        if rem_match:
+            fact = rem_match.group(1).strip()
+            if len(fact) > 4:
+                try:
+                    add_user_memory(body.email, fact)
+                    user_memories.append(fact)
+                except Exception as e:
+                    print(f"Auto memory save note: {e}")
+
+    # Auto web search check
+    perform_search = (
+        should_auto_search(clean_search_query)
+        if (body.web_search is not False and not image_prompt and not is_deep_research)
+        else False
+    )
 
     async def event_stream():
-        # Handle Image Generation intent
+        # 1. Handle AI Image Generation Intent
         if image_prompt:
             try:
                 yield f"data: {json.dumps({'type': 'search_status', 'status': f'Generating AI image for \"{image_prompt[:40]}\"...'})}\n\n"
-                img_data = generate_image_url(image_prompt)
+                img_data = await generate_image_url(image_prompt)
                 intro = f"Here is the generated image of **{image_prompt}**:\n\n"
                 for word in intro.split(" "):
                     yield f"data: {json.dumps({'delta': word + ' '})}\n\n"
@@ -306,25 +406,51 @@ async def chat(body: ChatBody):
                 yield f"data: {json.dumps({'error': f'Image generation error: {str(e)}'})}\n\n"
                 return
 
+
+        # 2. Handle Deep Multi-Source Research Intent
+        if is_deep_research and clean_search_query:
+            try:
+                yield f"data: {json.dumps({'type': 'search_status', 'status': f'🔍 Deep Research: Formulating multi-source sub-queries for \"{clean_search_query[:45]}\"...'})}\n\n"
+                research_data = await run_deep_research(clean_search_query)
+                if research_data.get("success") and research_data.get("results"):
+                    source_count = len(research_data.get("results", []))
+                    status_text = f"🌐 Deep Research: Aggregated {source_count} verified sources. Synthesizing comprehensive report..."
+                    yield f"data: {json.dumps({'type': 'search_status', 'status': status_text})}\n\n"
+                    yield f"data: {json.dumps({'type': 'sources', 'sources': research_data['results']})}\n\n"
+                    deep_context = format_deep_research_context(research_data)
+                    
+                    async for chunk in stream_chat_completion(
+                        llm_messages,
+                        web_search_context=deep_context,
+                        memories=user_memories,
+                    ):
+                        yield f"data: {json.dumps({'delta': chunk})}\n\n"
+                    yield f"data: {json.dumps({'done': True})}\n\n"
+                    return
+            except Exception as e:
+                print(f"Deep research fallback note: {e}")
+
+        # 3. Handle Standard Live Web Search Intent
         search_context = ""
         if perform_search and clean_search_query:
             try:
-                # Notify client that web search has initiated
                 yield f"data: {json.dumps({'type': 'search_status', 'status': f'Searching the web for \"{clean_search_query[:50]}\"...'})}\n\n"
                 search_data = await search_tavily(clean_search_query, max_results=5)
                 if search_data.get("success") and search_data.get("results"):
-                    # Emit verified web sources to the client
                     yield f"data: {json.dumps({'type': 'sources', 'sources': search_data['results']})}\n\n"
                     search_context = format_search_context(search_data)
                 elif search_data.get("error"):
-                    # Reset status if search encountered an error
                     yield f"data: {json.dumps({'type': 'search_status', 'status': ''})}\n\n"
             except Exception as e:
-                # Never let web search failure block normal chat streaming
                 print(f"Web search non-blocking error: {e}")
 
+        # 4. Stream LLM Chat Completion (Multimodal Vision + Grounding + Memory)
         try:
-            async for chunk in stream_chat_completion(llm_messages, web_search_context=search_context):
+            async for chunk in stream_chat_completion(
+                llm_messages,
+                web_search_context=search_context,
+                memories=user_memories,
+            ):
                 yield f"data: {json.dumps({'delta': chunk})}\n\n"
         except GeminiError as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -339,3 +465,4 @@ if __name__ == "__main__":
 
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=True)
+

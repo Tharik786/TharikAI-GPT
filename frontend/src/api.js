@@ -10,14 +10,19 @@ const BASE_URL = (RAW_URL ? RAW_URL.trim().replace(/\/+$/, "") : "") || "https:/
 export async function streamChat(
   messages,
   { onDelta, onDone, onError, onSources, onStatus },
-  { webSearch = true } = {}
+  { webSearch = true, deepResearch = false, email = null } = {}
 ) {
   let res;
   try {
     res = await fetch(`${BASE_URL}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, web_search: !!webSearch }),
+      body: JSON.stringify({
+        messages,
+        web_search: !!webSearch,
+        deep_research: !!deepResearch,
+        email: email || undefined,
+      }),
     });
   } catch {
     onError("Couldn't reach the server. Is the backend running?");
@@ -171,5 +176,73 @@ export async function extractDocumentRemote(file) {
   }
   return data;
 }
+
+export async function fetchRemoteMemories(email) {
+  try {
+    const res = await fetch(`${BASE_URL}/api/memories?email=${encodeURIComponent(email)}`);
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    return data.memories || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveMemoryRemote(memory, email) {
+  try {
+    const res = await fetch(`${BASE_URL}/api/memories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        content: memory.content,
+        id: memory.id,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return data.memory;
+  } catch (e) {
+    console.warn("Failed to save memory to remote:", e);
+  }
+}
+
+export async function deleteMemoryRemote(memoryId) {
+  try {
+    await fetch(`${BASE_URL}/api/memories/${encodeURIComponent(memoryId)}`, {
+      method: "DELETE",
+    });
+  } catch (e) {
+    console.warn("Failed to delete memory from remote:", e);
+  }
+}
+
+export async function generateImageRemote(prompt) {
+  const res = await fetch(`${BASE_URL}/api/image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || "Image generation failed.");
+  }
+  return data;
+}
+
+export async function runDeepResearchRemote(query) {
+  const res = await fetch(`${BASE_URL}/api/research`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || "Deep research failed.");
+  }
+  return data;
+}
+
+
+
 
 

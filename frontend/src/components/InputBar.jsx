@@ -64,6 +64,7 @@ export default function InputBar({
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(true);
+  const [deepResearchActive, setDeepResearchActive] = useState(false);
   const recognitionRef = useRef(null);
   const baseTextRef = useRef("");
   const valueRef = useRef(value);
@@ -343,6 +344,7 @@ export default function InputBar({
     onSend({
       text: value.trim(),
       attachments: [...attachments],
+      deepResearch: deepResearchActive,
     });
 
     setAttachments([]);
@@ -351,7 +353,7 @@ export default function InputBar({
 
   return (
     <div className="input-bar">
-      <div className="input-bar-inner">
+      <div className={`input-bar-inner ${deepResearchActive ? "deep-research-glow" : ""}`}>
         {/* Attachment menu popup */}
         {attachMenuOpen && (
           <div className="attach-popup-menu" ref={menuRef}>
@@ -361,11 +363,30 @@ export default function InputBar({
               </div>
               <div className="attach-item-texts">
                 <span className="attach-item-title">Add photos & files</span>
-                <span className="attach-item-sub">Upload PDF, Word, Code & Docs</span>
+                <span className="attach-item-sub">Upload PDF, Word, Vision & Docs</span>
+              </div>
+            </button>
+            <button
+              className="attach-menu-item"
+              onClick={() => {
+                setAttachMenuOpen(false);
+                onChange("Generate an image of ");
+                if (textareaRef.current) {
+                  textareaRef.current.focus();
+                }
+              }}
+            >
+              <div className="attach-item-icon">
+                <PaletteIcon />
+              </div>
+              <div className="attach-item-texts">
+                <span className="attach-item-title">Create AI image</span>
+                <span className="attach-item-sub">Generate images from description</span>
               </div>
             </button>
           </div>
         )}
+
 
         <input
           ref={fileInputRef}
@@ -385,6 +406,18 @@ export default function InputBar({
           title="Add photos & files"
         >
           <PlusCircleIcon />
+        </button>
+
+        {/* Deep Research Toggle Button */}
+        <button
+          type="button"
+          className={`deep-research-toggle-btn ${deepResearchActive ? "active" : ""}`}
+          onClick={() => setDeepResearchActive(!deepResearchActive)}
+          aria-label="Toggle Deep Research"
+          title={deepResearchActive ? "Deep Research Mode: Active" : "Enable Deep Research (Multi-Source Investigation)"}
+        >
+          <CompassIcon />
+          <span className="deep-research-label">Deep Research</span>
         </button>
 
         <div className="input-field-wrapper">
@@ -444,6 +477,8 @@ export default function InputBar({
             placeholder={
               isListening
                 ? "Listening..."
+                : deepResearchActive
+                ? "Ask a deep research question..."
                 : "Message TharikAI..."
             }
             value={value}
@@ -451,7 +486,6 @@ export default function InputBar({
             onKeyDown={handleKeyDown}
           />
         </div>
-
 
         {/* Voice-to-text Microphone Button */}
         <button
@@ -463,6 +497,7 @@ export default function InputBar({
         >
           {isListening ? <MicOffIcon /> : <MicIcon />}
         </button>
+
 
         {/* Dynamic Action Button: Voice icon when empty, Send icon when typing */}
         {((value && value.trim()) || attachments.length > 0) ? (
@@ -568,4 +603,27 @@ function VoiceWaveIcon() {
     </svg>
   );
 }
+
+function CompassIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" fill="currentColor" fillOpacity="0.2" />
+    </svg>
+  );
+}
+
+function PaletteIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
+    </svg>
+  );
+}
+
+
 

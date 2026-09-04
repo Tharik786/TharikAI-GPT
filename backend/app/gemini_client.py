@@ -14,21 +14,47 @@ load_dotenv()
 import datetime
 
 
-def get_system_prompt() -> str:
+def get_system_prompt(memories: list[str] | None = None) -> str:
     now_str = datetime.datetime.now().strftime("%A, %B %d, %Y, %H:%M:%S UTC")
-    return (
-        f"You are a helpful, friendly AI assistant. Format answers with Markdown "
-        f"(headings, lists, and fenced code blocks with a language tag) whenever "
-        f"that improves readability. Current Date and Time: {now_str}."
+    prompt = (
+        f"You are a helpful, friendly, and highly intelligent AI assistant (TharikAI).\n"
+        f"Format answers with clean Markdown (headings, lists, and fenced code blocks with language tags) "
+        f"whenever that improves readability.\n"
+        f"Multilingual Intelligence: You speak and understand all global languages fluently. "
+        f"Always reply in the EXACT SAME LANGUAGE that the user speaks or writes in (e.g. English, Spanish, French, German, Hindi, Tamil, Telugu, Arabic, Japanese, Chinese, Russian, Italian, Portuguese, Korean, etc.). "
+        f"Ensure your tone is natural, conversational, and culturally appropriate.\n"
+        f"Current Date and Time: {now_str}.\n"
     )
+    if memories and len(memories) > 0:
+        mem_text = "\n".join(f"- {m}" for m in memories if m.strip())
+        prompt += (
+            f"\n--- USER PERSONAL CONTEXT & MEMORIES ---\n"
+            f"Here are key facts, preferences, and details you remember about this user across sessions:\n"
+            f"{mem_text}\n"
+            f"Use these memories to personalize your answers where relevant.\n"
+            f"--- END OF MEMORIES ---\n"
+        )
+    return prompt
+
 
 
 SYSTEM_PROMPT = get_system_prompt()
 
 
-
 class GeminiError(Exception):
     pass
+
+
+def _extract_base64_and_mime(data_url: str):
+    """Extracts mimeType and raw base64 string from a data URL."""
+    if not data_url or not data_url.startswith("data:"):
+        return "image/jpeg", ""
+    try:
+        header, base64_data = data_url.split(";base64,", 1)
+        mime_type = header.replace("data:", "").strip()
+        return mime_type or "image/jpeg", base64_data.strip()
+    except Exception:
+        return "image/jpeg", ""
 
 
 async def _stream_openrouter(
@@ -46,7 +72,17 @@ async def _stream_openrouter(
     contents = [{"role": "system", "content": system_prompt}]
     for m in messages:
         role = "assistant" if m.get("role") in ("assistant", "model") else "user"
-        contents.append({"role": role, "content": m.get("content", "")})
+        msg_text = m.get("content", "")
+        images = m.get("images", [])
+        if images and role == "user":
+            user_content = [{"type": "text", "text": msg_text}]
+            for img in images:
+                data_url = img if isinstance(img, str) else img.get("dataUrl") or img.get("data")
+                if data_url:
+                    user_content.append({"type": "image_url", "image_url": {"url": data_url}})
+            contents.append({"role": role, "content": user_content})
+        else:
+            contents.append({"role": role, "content": msg_text})
 
     payload = {
         "model": model,
@@ -84,7 +120,7 @@ async def _stream_openrouter(
 async def _stream_gemini(
     api_key: str, messages: list[dict], system_prompt: str = SYSTEM_PROMPT
 ) -> AsyncGenerator[str, None]:
-    model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip() or "gemini-3.6-flash"
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{model}:streamGenerateContent?alt=sse&key={api_key}"
@@ -93,9 +129,38 @@ async def _stream_gemini(
     contents = []
     for m in messages:
         role = "user" if m.get("role") == "user" else "model"
+        parts = []
+        text_content = m.get("content", "")
+        if text_content:
+            parts.append({"text": text_content})
+        
+        # Add any vision image parts
+        images = m.get("images", [])
+        for img in images:
+            if isinstance(img, str) and img.startswith("data:"):
+                mime, b64 = _extract_base64_and_mime(img)
+                if b64:
+                    parts.append({"inlineData": {"mimeType": mime, "data": b64}})
+            elif isinstance(img, dict):
+                data_url = img.get("dataUrl") or img.get("data")
+                if data_url and data_url.startswith("data:"):
+                    mime, b64 = _extract_base64_and_mime(data_url)
+                    if b64:
+                        parts.append({"inlineData": {"mimeType": mime, "data": b64}})
+                elif img.get("base64"):
+                    parts.append({
+                        "inlineData": {
+                            "mimeType": img.get("mimeType", "image/jpeg"),
+                            "data": img.get("base64"),
+                        }
+                    })
+
+        if not parts:
+            parts.append({"text": ""})
+
         contents.append({
             "role": role,
-            "parts": [{"text": m.get("content", "")}]
+            "parts": parts,
         })
 
     payload = {
@@ -149,21 +214,22 @@ async def _stream_gemini(
 
 
 async def stream_chat_completion(
-    messages: list[dict], web_search_context: str = ""
+    messages: list[dict],
+    web_search_context: str = "",
+    memories: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Yields text chunks as they arrive from OpenRouter or Google Gemini.
     Automatically detects the provider based on the key format or env vars.
-    If web_search_context is provided, grounds the AI with real-time web results.
+    Supports Multimodal Vision, Memory injection, and Web Search grounding.
     """
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     generic_key = os.getenv("AI_API_KEY", "").strip()
 
-    system_prompt = get_system_prompt()
+    system_prompt = get_system_prompt(memories=memories)
     if web_search_context:
         system_prompt = f"{system_prompt}\n\n{web_search_context}"
-
 
     # Determine key and provider
     if openrouter_key:
@@ -184,4 +250,5 @@ async def stream_chat_completion(
     else:
         async for chunk in _stream_gemini(key, messages, system_prompt=system_prompt):
             yield chunk
+
 

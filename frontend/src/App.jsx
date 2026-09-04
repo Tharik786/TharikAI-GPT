@@ -5,14 +5,18 @@ import ChatWindow from "./components/ChatWindow.jsx";
 import InputBar from "./components/InputBar.jsx";
 import AuthModal from "./components/AuthModal.jsx";
 import VoiceModeModal from "./components/VoiceModeModal.jsx";
+import MemoryModal from "./components/MemoryModal.jsx";
 import {
   streamChat,
   fetchRemoteConversations,
   syncConversationRemote,
   syncMessagesRemote,
   deleteConversationRemote,
+  fetchRemoteMemories,
+  saveMemoryRemote,
+  deleteMemoryRemote,
 } from "./api.js";
-import { storage, authStorage } from "./storage.js";
+import { storage, authStorage, memoryStorage } from "./storage.js";
 import {
   speakMessage,
   stopSpeech,
@@ -34,6 +38,8 @@ export default function App() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [voiceModeOpen, setVoiceModeOpen] = useState(false);
+  const [memoryModalOpen, setMemoryModalOpen] = useState(false);
+  const [memories, setMemories] = useState([]);
 
   // Text-To-Speech state
   const [speechState, setSpeechState] = useState({
@@ -53,12 +59,51 @@ export default function App() {
     };
   }, []);
 
-  // Load current user and sync conversation list with Supabase
+  // Load current user, conversations, and memories
   useEffect(() => {
     const activeUser = authStorage.getCurrentUser();
     setUser(activeUser);
     syncConversations(activeUser);
+    syncMemories(activeUser);
   }, []);
+
+  const syncMemories = async (currentUser) => {
+    let localList = memoryStorage.list();
+    setMemories(localList);
+
+    if (currentUser?.email) {
+      try {
+        const remote = await fetchRemoteMemories(currentUser.email);
+        if (remote && remote.length > 0) {
+          memoryStorage.writeAll(remote);
+          setMemories(remote);
+        } else if (localList.length > 0) {
+          for (const m of localList) {
+            await saveMemoryRemote(m, currentUser.email);
+          }
+        }
+      } catch (err) {
+        console.warn("Memories cloud sync note:", err);
+      }
+    }
+  };
+
+  const handleAddMemory = async (content) => {
+    const newMem = memoryStorage.add(content);
+    setMemories(memoryStorage.list());
+    if (user?.email) {
+      await saveMemoryRemote(newMem, user.email);
+    }
+  };
+
+  const handleDeleteMemory = async (memoryId) => {
+    memoryStorage.remove(memoryId);
+    setMemories(memoryStorage.list());
+    if (user?.email) {
+      await deleteMemoryRemote(memoryId);
+    }
+  };
+
 
   const syncConversations = async (currentUser) => {
     let list = storage.list();
@@ -119,11 +164,22 @@ export default function App() {
     const attachments = typeof payload === "object" && Array.isArray(payload?.attachments) ? payload.attachments : [];
     const webSearch = typeof payload === "object" && payload?.webSearch !== undefined ? payload.webSearch : true;
 
+    const deepResearch = typeof payload === "object" && payload?.deepResearch !== undefined ? payload.deepResearch : false;
+
+    // Extract any image attachments for multimodal vision
+    const imageAttachments = attachments.filter((a) => a.isImage && a.dataUrl);
+
     const userMsg = {
       id: `local-${Date.now()}`,
       role: "user",
       content: text,
       webSearch,
+      deepResearch,
+      images: imageAttachments.map((a) => ({
+        dataUrl: a.dataUrl,
+        mimeType: a.type || "image/jpeg",
+        name: a.name,
+      })),
       attachments: attachments.map((a) => ({
         name: a.name,
         size: a.size,
@@ -154,7 +210,7 @@ export default function App() {
       storage.rename(convId, title);
     }
 
-    // Prepare full document content for the AI model
+    // Prepare full document content and multimodal images for the AI model
     let promptForLLM = text;
     if (attachments.length > 0) {
       attachments.forEach((att) => {
@@ -167,17 +223,24 @@ export default function App() {
       });
     }
 
-    const historyForLLM = [...messages, { role: "user", content: promptForLLM }].map((m) => {
-      if (m.attachments && m.attachments.length > 0 && !m.content.includes("--- Document Attached:")) {
-        let full = m.content;
+    const historyForLLM = [...messages, {
+      role: "user",
+      content: promptForLLM,
+      images: imageAttachments.map((a) => a.dataUrl),
+    }].map((m) => {
+      let fullContent = m.content;
+      if (m.attachments && m.attachments.length > 0 && !fullContent.includes("--- Document Attached:")) {
         m.attachments.forEach((att) => {
           if (att.textContent) {
-            full += `\n\n--- Document Attached: ${att.name} ---\n${att.textContent}\n--- End of Document ---`;
+            fullContent += `\n\n--- Document Attached: ${att.name} ---\n${att.textContent}\n--- End of Document ---`;
           }
         });
-        return { role: m.role, content: full };
       }
-      return { role: m.role, content: m.content };
+      return {
+        role: m.role,
+        content: fullContent,
+        images: m.images || [],
+      };
     });
 
     let pendingDeltas = "";
@@ -224,7 +287,6 @@ export default function App() {
           }
         },
         onDone: () => {
-
           if (rafId) {
             cancelAnimationFrame(rafId);
             rafId = null;
@@ -262,9 +324,10 @@ export default function App() {
           }
         },
       },
-      { webSearch }
+      { webSearch, deepResearch, email: user?.email }
     );
   };
+
 
 
   const handleRename = (id, title) => {
@@ -535,6 +598,7 @@ export default function App() {
         onLogout={handleLogout}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        onOpenMemory={() => setMemoryModalOpen(true)}
       />
 
       <main className="main-panel">
@@ -551,6 +615,8 @@ export default function App() {
           onLogout={handleLogout}
           onToggleSidebar={() => setSidebarOpen(true)}
           onOpenVoiceMode={() => setVoiceModeOpen(true)}
+          onOpenMemory={() => setMemoryModalOpen(true)}
+          memoryCount={memories.length}
         />
 
         {error && <div className="error-banner">{error}</div>}
@@ -650,7 +716,17 @@ export default function App() {
         onSendMessage={handleVoiceMessageSend}
         activeConversationTitle={storage.get(activeId)?.title || "Live Voice"}
       />
+
+      <MemoryModal
+        isOpen={memoryModalOpen}
+        onClose={() => setMemoryModalOpen(false)}
+        memories={memories}
+        onAddMemory={handleAddMemory}
+        onDeleteMemory={handleDeleteMemory}
+        user={user}
+      />
     </div>
   );
 }
+
 
