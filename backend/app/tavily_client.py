@@ -12,30 +12,36 @@ load_dotenv()
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
-# Common keywords/patterns indicating time-sensitive or live real-time queries
+# Common keywords/patterns strictly indicating real-time web search
 TIME_SENSITIVE_PATTERNS = [
-    r"\b(today|tonight|yesterday|tomorrow|this week|this month|this year|now|right now)\b",
-    r"\b(latest|current|currently|recent|recently|breaking|news|updates?|newest|headlines?)\b",
-    r"\b(weather|temperature|forecast|rain|climate|humidity)\b",
-    r"\b(stock|price|prices|shares?|crypto|bitcoin|btc|ethereum|eth|market|rate|usd|inr|eur|currency|valuation|market cap)\b",
-    r"\b(who is|who won|who is the|who are|election|olympics|championship|tournament|league|ipl|fifa|world cup)\b",
-    r"\b(score|scores|live score|match|vs\b|game score)\b",
-    r"\b(release date|launch date|schedule|what time|whats the time|what date|when is|when will)\b",
-    r"\b(ceo of|president of|prime minister of|founder of|net worth)\b",
-    r"\b(search for|lookup|look up|find out|what happened in|tell me the news)\b",
-    r"\b(2024|2025|2026|2027)\b",
+    r"\b(latest news|breaking news|current news|today's news|headlines)\b",
+    r"\b(weather in|weather today|temperature in|forecast for)\b",
+    r"\b(stock price|crypto price|bitcoin price|btc price|ethereum price|market cap of)\b",
+    r"\b(who won the|election results|olympics|championship winner|fifa score|ipl score|live score)\b",
+    r"\b(release date of|launch date of|when was .* released|when will .* launch)\b",
+    r"\b(current ceo of|current president of|prime minister of|net worth of)\b",
+    r"\b(search for|search the web for|look up on google|find recent news about)\b",
 ]
 
 COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in TIME_SENSITIVE_PATTERNS]
 
+# Conversational queries that should NEVER trigger web search latency
+CONVERSATIONAL_EXCLUSIONS = re.compile(
+    r"^\s*(?:who are you|who made you|who created you|what is your name|how are you|hello|hi|hey|good morning|good evening|who am i|tell me a joke|write a story|write code|explain|help me)\b",
+    re.IGNORECASE,
+)
+
 
 def should_auto_search(query: str) -> bool:
     """
-    Checks if a query likely requires real-time web search.
+    Checks if a query genuinely requires real-time web search.
+    Prevents unnecessary search latency on normal conversational or coding queries.
     """
     if not query or len(query.strip()) < 3:
         return False
     q = query.strip()
+    if CONVERSATIONAL_EXCLUSIONS.search(q):
+        return False
     return any(pattern.search(q) for pattern in COMPILED_PATTERNS)
 
 

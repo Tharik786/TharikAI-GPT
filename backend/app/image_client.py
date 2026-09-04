@@ -163,12 +163,73 @@ def detect_image_prompt(query: str) -> str | None:
     return None
 
 
+HF_TOKEN = os.getenv("HF_TOKEN", os.getenv("HUGGINGFACE_API_KEY", "")).strip()
+HF_FLUX_MODEL = os.getenv("HF_FLUX_MODEL", "black-forest-labs/FLUX.1-dev").strip()
+
+
+async def _generate_huggingface_flux(prompt: str, token: str) -> dict:
+    """
+    Generates an image via Hugging Face FLUX.1 inference API.
+    """
+    model = HF_FLUX_MODEL or "black-forest-labs/FLUX.1-dev"
+    url = f"https://router.huggingface.co/hf-inference/models/{model}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "inputs": prompt,
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(url, headers=headers, json=payload)
+        if response.status_code != 200:
+            # Fallback to legacy inference endpoint
+            legacy_url = f"https://api-inference.huggingface.co/models/{model}"
+            response = await client.post(legacy_url, headers=headers, json=payload)
+            if response.status_code != 200:
+                raise Exception(f"Hugging Face FLUX API returned HTTP {response.status_code}: {response.text[:200]}")
+
+        # Detect format
+        if response.content.startswith(b"\x89PNG"):
+            content_type = "image/png"
+        elif response.content.startswith(b"\xff\xd8\xff"):
+            content_type = "image/jpeg"
+        elif response.content.startswith(b"RIFF") and b"WEBP" in response.content[:16]:
+            content_type = "image/webp"
+        else:
+            content_type = response.headers.get("content-type", "image/jpeg")
+            if not content_type.startswith("image/"):
+                content_type = "image/jpeg"
+
+        b64_data = base64.b64encode(response.content).decode("utf-8")
+        data_url = f"data:{content_type};base64,{b64_data}"
+
+        return {
+            "success": True,
+            "provider": f"huggingface/{model}",
+            "prompt": prompt,
+            "image_url": data_url,
+            "content_type": content_type,
+        }
+
+
 async def generate_image_url(prompt: str) -> dict:
     """
-    Generates an AI image using the Cloudflare Worker image generation endpoint.
+    Generates an AI image using Hugging Face FLUX.1 if HF_TOKEN is configured,
+    or falls back to the Cloudflare Worker image generation endpoint.
     Converts binary response into a data URL for seamless frontend display.
     """
     clean_prompt = prompt.strip()
+
+    # 1. Try Hugging Face FLUX.1 if HF token is configured
+    if HF_TOKEN:
+        try:
+            return await _generate_huggingface_flux(clean_prompt, HF_TOKEN)
+        except Exception as hf_err:
+            print(f"Hugging Face FLUX.1 error, falling back to default worker: {hf_err}")
+
+    # 2. Default Cloudflare Worker Image API
     headers = {
         "Authorization": f"Bearer {IMAGE_API_KEY}",
         "Content-Type": "application/json",
@@ -199,6 +260,7 @@ async def generate_image_url(prompt: str) -> dict:
 
         return {
             "success": True,
+            "provider": "cloudflare/flux",
             "prompt": clean_prompt,
             "image_url": data_url,
             "content_type": content_type,

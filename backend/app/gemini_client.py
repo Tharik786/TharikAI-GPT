@@ -54,6 +54,19 @@ def _extract_base64_and_mime(data_url: str):
         return "image/jpeg", ""
 
 
+_CLIENT_POOL: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _CLIENT_POOL
+    if _CLIENT_POOL is None or _CLIENT_POOL.is_closed:
+        _CLIENT_POOL = httpx.AsyncClient(
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50, keepalive_expiry=30.0),
+            timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=10.0),
+        )
+    return _CLIENT_POOL
+
+
 async def _stream_openrouter(
     api_key: str, messages: list[dict], system_prompt: str = SYSTEM_PROMPT
 ) -> AsyncGenerator[str, None]:
@@ -87,31 +100,31 @@ async def _stream_openrouter(
         "stream": True,
     }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        async with client.stream("POST", url, headers=headers, json=payload) as response:
-            if response.status_code != 200:
-                body = await response.aread()
-                raw_err = body.decode(errors="ignore")
-                try:
-                    err_json = json.loads(raw_err)
-                    msg = err_json.get("error", {}).get("message", raw_err)
-                    raise GeminiError(f"OpenRouter API error ({response.status_code}): {msg}")
-                except json.JSONDecodeError:
-                    raise GeminiError(f"OpenRouter API error ({response.status_code}): {raw_err}")
+    client = _get_http_client()
+    async with client.stream("POST", url, headers=headers, json=payload) as response:
+        if response.status_code != 200:
+            body = await response.aread()
+            raw_err = body.decode(errors="ignore")
+            try:
+                err_json = json.loads(raw_err)
+                msg = err_json.get("error", {}).get("message", raw_err)
+                raise GeminiError(f"OpenRouter API error ({response.status_code}): {msg}")
+            except json.JSONDecodeError:
+                raise GeminiError(f"OpenRouter API error ({response.status_code}): {raw_err}")
 
-            async for line in response.aiter_lines():
-                if not line or not line.startswith("data: "):
-                    continue
-                data_str = line[len("data: "):].strip()
-                if data_str == "[DONE]":
-                    break
-                try:
-                    data = json.loads(data_str)
-                    delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                    if delta:
-                        yield delta
-                except json.JSONDecodeError:
-                    continue
+        async for line in response.aiter_lines():
+            if not line or not line.startswith("data: "):
+                continue
+            data_str = line[len("data: "):].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                data = json.loads(data_str)
+                delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                if delta:
+                    yield delta
+            except json.JSONDecodeError:
+                continue
 
 
 async def _stream_gemini(
@@ -171,8 +184,8 @@ async def _stream_gemini(
         }
     }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        async with client.stream("POST", url, json=payload) as response:
+    client = _get_http_client()
+    async with client.stream("POST", url, json=payload) as response:
             if response.status_code != 200:
                 body = await response.aread()
                 raw_err = body.decode(errors="ignore")
@@ -210,15 +223,76 @@ async def _stream_gemini(
                     continue
 
 
+async def _stream_huggingface_chat(
+    token: str, model_id: str, messages: list[dict], system_prompt: str = SYSTEM_PROMPT
+) -> AsyncGenerator[str, None]:
+    """
+    Streams chat completion from Hugging Face Inference API for models like SHSLab/Kimi-K3-Abliterated.
+    """
+    url = f"https://router.huggingface.co/hf-inference/models/{model_id}/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    contents = [{"role": "system", "content": system_prompt}]
+    for m in messages:
+        role = "assistant" if m.get("role") in ("assistant", "model") else "user"
+        contents.append({"role": role, "content": m.get("content", "")})
+
+    payload = {
+        "model": model_id,
+        "messages": contents,
+        "stream": True,
+        "max_tokens": 4096,
+        "temperature": 0.7,
+    }
+
+    client = _get_http_client()
+    async with client.stream("POST", url, headers=headers, json=payload) as response:
+        if response.status_code != 200:
+            # Fallback legacy URL
+            legacy_url = f"https://api-inference.huggingface.co/models/{model_id}/v1/chat/completions"
+            async with client.stream("POST", legacy_url, headers=headers, json=payload) as leg_resp:
+                if leg_resp.status_code != 200:
+                    body = await leg_resp.aread()
+                    raise GeminiError(f"Hugging Face API error ({leg_resp.status_code}): {body.decode(errors='ignore')}")
+                async for line in leg_resp.aiter_lines():
+                    if line.startswith("data: ") and line[6:].strip() != "[DONE]":
+                        try:
+                            chunk_data = json.loads(line[6:].strip())
+                            delta = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if delta:
+                                yield delta
+                        except Exception:
+                            continue
+                return
+
+        async for line in response.aiter_lines():
+            if not line or not line.startswith("data: "):
+                continue
+            data_str = line[len("data: "):].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                data = json.loads(data_str)
+                delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                if delta:
+                    yield delta
+            except json.JSONDecodeError:
+                continue
+
+
 async def stream_chat_completion(
     messages: list[dict],
     web_search_context: str = "",
 ) -> AsyncGenerator[str, None]:
     """
-    Yields text chunks as they arrive from OpenRouter or Google Gemini.
+    Yields text chunks as they arrive from OpenRouter, Hugging Face, or Google Gemini.
     Automatically detects the provider based on the key format or env vars.
     Supports Multimodal Vision and Web Search grounding.
     """
+    hf_token = os.getenv("HF_TOKEN", os.getenv("HUGGINGFACE_API_KEY", "")).strip()
+    hf_chat_model = os.getenv("HF_CHAT_MODEL", "").strip()
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     generic_key = os.getenv("AI_API_KEY", "").strip()
@@ -227,12 +301,22 @@ async def stream_chat_completion(
     if web_search_context:
         system_prompt = f"{system_prompt}\n\n{web_search_context}"
 
-    # Determine key and provider
+    # 1. Hugging Face Chat Model (e.g. SHSLab/Kimi-K3-Abliterated)
+    if hf_token and hf_chat_model:
+        try:
+            async for chunk in _stream_huggingface_chat(hf_token, hf_chat_model, messages, system_prompt=system_prompt):
+                yield chunk
+            return
+        except Exception as hf_err:
+            print(f"Hugging Face chat stream fallback note: {hf_err}")
+
+    # 2. OpenRouter provider
     if openrouter_key:
         async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt):
             yield chunk
         return
 
+    # 3. Gemini / Default provider
     key = gemini_key or generic_key
     if not key:
         raise GeminiError(
