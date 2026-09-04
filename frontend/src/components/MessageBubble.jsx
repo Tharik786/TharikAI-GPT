@@ -450,28 +450,44 @@ const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ..
   const [error, setError] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
 
+  // Sanitize and restore base64 data URL if markdown parser converted '+' to spaces or '%2B'
+  const cleanSrc = useMemo(() => {
+    if (!src || typeof src !== "string") return "";
+    const s = src.trim();
+    if (s.startsWith("data:image/")) {
+      const commaIdx = s.indexOf(",");
+      if (commaIdx !== -1) {
+        const header = s.slice(0, commaIdx);
+        let b64 = s.slice(commaIdx + 1);
+        b64 = b64.replace(/ /g, "+").replace(/%2B/gi, "+");
+        return `${header},${b64}`;
+      }
+    }
+    return s;
+  }, [src]);
+
   useEffect(() => {
-    if (src) {
+    if (cleanSrc) {
       setError(false);
       setLoaded(false);
     }
-  }, [src]);
+  }, [cleanSrc]);
 
   const handleDownload = async (e) => {
     e.stopPropagation();
     try {
-      const response = await fetch(src);
+      const response = await fetch(cleanSrc);
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${(alt || "ai-image").slice(0, 30).replace(/[^a-zA-Z0-9_-]/g, "_")}.jpg`;
+      a.download = `${(alt || "ai-image").slice(0, 30).replace(/[^a-zA-Z0-9_-]/g, "_")}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     } catch {
-      window.open(src, "_blank");
+      window.open(cleanSrc, "_blank");
     }
   };
 
@@ -495,11 +511,18 @@ const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ..
           </div>
         )}
         <img
-          src={src}
+          src={cleanSrc}
           alt={alt || "AI Generated Artwork"}
           className={`generated-ai-img ${loaded ? "is-loaded" : "is-loading"}`}
-          onLoad={() => setLoaded(true)}
-          onError={() => setError(true)}
+          onLoad={() => {
+            setLoaded(true);
+            setError(false);
+          }}
+          onError={() => {
+            setError(true);
+          }}
+          loading="eager"
+          decoding="async"
           {...props}
         />
         {loaded && (
@@ -522,7 +545,7 @@ const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ..
               className="image-action-btn"
               onClick={(e) => {
                 e.stopPropagation();
-                window.open(src, "_blank");
+                window.open(cleanSrc, "_blank");
               }}
               title="Open full size in new tab"
             >
@@ -540,7 +563,7 @@ const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ..
       {modalOpen && (
         <div className="image-lightbox-overlay" onClick={() => setModalOpen(false)}>
           <div className="image-lightbox-content" onClick={(e) => e.stopPropagation()}>
-            <img src={src} alt={alt} className="lightbox-img" />
+            <img src={cleanSrc} alt={alt} className="lightbox-img" />
             <button
               type="button"
               className="lightbox-close-btn"

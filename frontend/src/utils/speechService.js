@@ -27,6 +27,8 @@ export function cleanTextForSpeech(raw = "") {
   text = text.replace(/---\s*Document Attached:[\s\S]*?---\s*End of Document\s*---/gi, "");
   text = text.replace(/\[Document:[\s\S]*?\[End of Document\]/gi, "");
   text = text.replace(/\[Attached image:.*?\]/gi, "");
+  text = text.replace(/!\[.*?\]\(data:image\/[^)]+\)/gi, " Here is your generated image. ");
+  text = text.replace(/!\[.*?\]\([^)]+\)/gi, "");
 
   // Replace multiline code blocks with a brief natural mention
   text = text.replace(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/g, (match, code) => {
