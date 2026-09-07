@@ -14,9 +14,11 @@ load_dotenv()
 
 
 import io
+import time
+import urllib.parse
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -29,7 +31,8 @@ from app.tavily_client import (
     run_deep_research,
     format_deep_research_context,
 )
-from app.image_client import detect_image_prompt, generate_image_url
+from app.image_client import detect_image_prompt, generate_image_url, fetch_image_from_cloudflare
+from app.voice_service import create_livekit_token, get_livekit_config
 from app.db import (
     init_db,
     get_db_connection,
@@ -118,6 +121,13 @@ class MessagesBody(BaseModel):
     updatedAt: int
 
 
+class VoiceSessionBody(BaseModel):
+    room_name: str | None = None
+    identity: str | None = None
+    name: str | None = None
+    email: str | None = None
+
+
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def root():
@@ -140,6 +150,38 @@ async def health():
         "status": "ok" if db_status == "connected" else "degraded",
         "database": db_status,
     }
+
+
+@app.get("/api/voice/status")
+async def voice_status():
+    """
+    Returns the server voice configuration state without exposing secrets.
+    """
+    return get_livekit_config()
+
+
+@app.post("/api/voice/session")
+async def create_voice_session_endpoint(body: VoiceSessionBody | None = None):
+    """
+    Generates a secure, short-lived LiveKit access token for real-time WebRTC voice agent session.
+    """
+    email = body.email.strip().lower() if body and body.email else None
+    display_name = (body.name if body and body.name else None) or (email.split("@")[0] if email else "User")
+    identity = (body.identity if body and body.identity else None) or (f"user-{email.replace('@', '_').replace('.', '_')}" if email else None)
+    room_name = body.room_name if body else None
+
+    try:
+        session_data = create_livekit_token(
+            room_name=room_name,
+            identity=identity,
+            name=display_name,
+        )
+        return session_data
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate voice session: {str(e)}")
+
 
 
 @app.post("/api/auth/register")
@@ -277,11 +319,40 @@ class ImageBody(BaseModel):
 @app.post("/api/image")
 async def image_endpoint(body: ImageBody):
     """
-    Direct AI image generation endpoint powered by Cloudflare Worker Image API.
+    Direct AI image generation endpoint proxying to Cloudflare Worker Image API.
+    Returns RAW PNG binary data.
     """
     if not body.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    return await generate_image_url(body.prompt.strip())
+    raw_bytes, content_type = await fetch_image_from_cloudflare(body.prompt.strip())
+    return Response(
+        content=raw_bytes,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Content-Type": content_type,
+            "Content-Disposition": f'inline; filename="image_{int(time.time())}.png"',
+        },
+    )
+
+
+@app.get("/api/image")
+async def image_get_endpoint(prompt: str):
+    """
+    Direct AI image generation GET endpoint returning RAW PNG binary data.
+    """
+    if not prompt or not prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    raw_bytes, content_type = await fetch_image_from_cloudflare(prompt.strip())
+    return Response(
+        content=raw_bytes,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Content-Type": content_type,
+            "Content-Disposition": f'inline; filename="image_{int(time.time())}.png"',
+        },
+    )
 
 
 @app.post("/api/chat")
@@ -331,11 +402,11 @@ async def chat(body: ChatBody):
         if image_prompt:
             try:
                 yield f"data: {json.dumps({'type': 'search_status', 'status': f'Generating AI image for \"{image_prompt[:40]}\"...'})}\n\n"
-                img_data = await generate_image_url(image_prompt)
                 intro = f"Here is the generated image of **{image_prompt}**:\n\n"
                 for word in intro.split(" "):
                     yield f"data: {json.dumps({'delta': word + ' '})}\n\n"
-                img_markdown = f"![{image_prompt}]({img_data['image_url']})\n\n"
+                encoded_prompt = urllib.parse.quote(image_prompt)
+                img_markdown = f"![{image_prompt}](/api/image?prompt={encoded_prompt})\n\n"
                 yield f"data: {json.dumps({'delta': img_markdown})}\n\n"
                 yield f"data: {json.dumps({'done': True})}\n\n"
                 return

@@ -7,4 +7,7 @@ pg8000>=1.31.2
 pypdf>=5.0.0
 python-docx>=1.1.0
 python-multipart>=0.0.9
+livekit-api>=0.7.0
+PyJWT>=2.8.0
+
 

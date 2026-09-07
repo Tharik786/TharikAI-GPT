@@ -668,6 +668,7 @@ export default function App() {
         onClose={() => setVoiceModeOpen(false)}
         onSendMessage={handleVoiceMessageSend}
         activeConversationTitle={storage.get(activeId)?.title || "Live Voice"}
+        user={user}
       />
     </div>
   );

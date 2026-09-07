@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { requestVoiceSession } from "../api";
+import { livekitVoice } from "../utils/livekitVoiceService";
 import {
   speakMessage,
   stopSpeech,
@@ -6,74 +8,124 @@ import {
   getAvailableVoices,
   detectTextLanguage,
   getBestVoiceForLanguage,
-  isSpeechSupported,
 } from "../utils/speechService";
 
 export default function VoiceModeModal({
   isOpen,
   onClose,
   onSendMessage,
-  activeConversationTitle = "New Conversation",
+  activeConversationTitle = "Live Voice Session",
+  user = null,
 }) {
-  const [status, setStatus] = useState("idle"); // 'listening' | 'thinking' | 'speaking' | 'muted'
-  const [userTranscript, setUserTranscript] = useState("");
-  const [aiTranscript, setAiTranscript] = useState("");
+  const [mode, setMode] = useState("livekit"); // 'livekit' | 'browser_fallback'
+  const [status, setStatus] = useState("connecting"); // 'connecting' | 'listening' | 'user_speaking' | 'ai_speaking' | 'muted' | 'reconnecting' | 'disconnected' | 'error'
+  const [errorMessage, setErrorMessage] = useState("");
   const [isMuted, setIsMuted] = useState(false);
-  const [selectedVoiceURI, setSelectedVoiceURI] = useState("");
-  const [speechRate, setSpeechRate] = useState(1.05);
+  const [transcripts, setTranscripts] = useState([]);
+  const [callDuration, setCallDuration] = useState(0);
+  const [showTranscripts, setShowTranscripts] = useState(false);
 
+  const durationTimerRef = useRef(null);
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
-  const isListeningRef = useRef(false);
-  const statusRef = useRef(status);
-  const isMutedRef = useRef(isMuted);
+  const isListeningFallbackRef = useRef(false);
 
-  statusRef.current = status;
-  isMutedRef.current = isMuted;
+  // Format duration mm:ss
+  const formatDuration = (secs) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
 
-  // Load browser voices on mount
-  useEffect(() => {
-    const loadVoices = () => {
-      const v = getAvailableVoices();
-      if (v.length > 0 && !selectedVoiceURI) {
-        const pref = v.find(
-          (item) =>
-            item.name.toLowerCase().includes("natural") ||
-            item.name.toLowerCase().includes("neural") ||
-            item.name.toLowerCase().includes("google")
-        ) || v[0];
-        if (pref) setSelectedVoiceURI(pref.voiceURI);
+  // -------------------------------------------------------------
+  // LiveKit WebRTC Voice Session Lifecycle
+  // -------------------------------------------------------------
+  const initLiveKitVoice = useCallback(async () => {
+    try {
+      setStatus("connecting");
+      setErrorMessage("");
+
+      // 1. Request microphone permission early
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Stop initial test stream so LiveKit can bind it cleanly
+          stream.getTracks().forEach((t) => t.stop());
+        } catch (permErr) {
+          if (permErr.name === "NotAllowedError" || permErr.name === "PermissionDeniedError") {
+            setStatus("error");
+            setErrorMessage("Microphone permission is required for voice chat. Please allow mic access.");
+            return;
+          }
+        }
       }
-    };
 
-    loadVoices();
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
+      // 2. Request LiveKit token from backend
+      const session = await requestVoiceSession({
+        email: user?.email,
+        name: user?.name,
+      });
+
+      if (!session || !session.token || !session.serverUrl) {
+        throw new Error("Invalid session data returned from server.");
+      }
+
+      setMode("livekit");
+
+      // 3. Connect to LiveKit Room
+      await livekitVoice.connect({
+        serverUrl: session.serverUrl,
+        token: session.token,
+      });
+    } catch (err) {
+      console.warn("LiveKit connection notice, switching to responsive fallback mode:", err);
+      // If LiveKit is not configured or fails, fallback to local voice engine
+      startFallbackVoiceMode();
     }
-  }, [selectedVoiceURI]);
+  }, [user]);
 
-  // Cleanup on unmount or close
+  // Subscribe to LiveKit events
   useEffect(() => {
-    if (!isOpen) {
-      stopListening();
-      stopSpeech();
-      setStatus("idle");
-      setUserTranscript("");
-      setAiTranscript("");
-    }
-  }, [isOpen]);
+    const unsubStatus = livekitVoice.on("statusChange", (newStatus) => {
+      setStatus(newStatus);
+      if (newStatus === "muted") setIsMuted(true);
+      else if (newStatus === "listening" || newStatus === "user_speaking") setIsMuted(false);
+    });
 
-  // Voice Activity Detection / Speech Recognition setup
-  const startListening = useCallback(() => {
-    if (isMutedRef.current) {
-      setStatus("muted");
-      return;
-    }
+    const unsubTranscript = livekitVoice.on("transcript", ({ role, text }) => {
+      if (!text || !text.trim()) return;
+      setTranscripts((prev) => [
+        ...prev,
+        { id: `t-${Date.now()}-${Math.random()}`, role, text, timestamp: new Date() },
+      ]);
+    });
 
-    const SpeechRec =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+    const unsubError = livekitVoice.on("error", (msg) => {
+      setErrorMessage(msg);
+      setStatus("error");
+    });
+
+    return () => {
+      unsubStatus();
+      unsubTranscript();
+      unsubError();
+    };
+  }, []);
+
+  // -------------------------------------------------------------
+  // Fallback Voice Recognition (When LiveKit Server is not active)
+  // -------------------------------------------------------------
+  const startFallbackVoiceMode = () => {
+    setMode("browser_fallback");
+    setStatus("listening");
+    startFallbackSpeechRec();
+  };
+
+  const startFallbackSpeechRec = useCallback(() => {
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
-      setStatus("idle");
+      setStatus("error");
+      setErrorMessage("Your browser does not support realtime speech recognition.");
       return;
     }
 
@@ -90,7 +142,7 @@ export default function VoiceModeModal({
       rec.lang = "en-US";
 
       rec.onstart = () => {
-        isListeningRef.current = true;
+        isListeningFallbackRef.current = true;
         setStatus("listening");
       };
 
@@ -100,102 +152,82 @@ export default function VoiceModeModal({
 
         for (let i = 0; i < event.results.length; i++) {
           const result = event.results[i];
-          if (result.isFinal) {
-            final += result[0].transcript;
-          } else {
-            interim += result[0].transcript;
-          }
+          if (result.isFinal) final += result[0].transcript;
+          else interim += result[0].transcript;
         }
 
         const currentText = (final || interim).trim();
         if (currentText) {
-          setUserTranscript(currentText);
-
-          // Reset silence timer on every new speech event
+          setStatus("user_speaking");
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = setTimeout(() => {
-            // User paused speaking for 1.2s -> submit voice turn
-            if (isListeningRef.current && currentText.length >= 2) {
-              handleVoiceSubmit(currentText);
+            if (isListeningFallbackRef.current && currentText.length >= 2) {
+              handleFallbackVoiceTurn(currentText);
             }
-          }, 1200);
+          }, 1100);
         }
       };
 
       rec.onerror = (e) => {
         if (e.error === "no-speech" || e.error === "aborted") return;
-        console.warn("Voice Recognition error:", e.error);
         if (e.error === "not-allowed") {
           setIsMuted(true);
           setStatus("muted");
+          setErrorMessage("Microphone access denied.");
         }
       };
 
       rec.onend = () => {
-        isListeningRef.current = false;
-        // If we should still be listening and not in another state, restart
-        if (statusRef.current === "listening" && !isMutedRef.current) {
-          try {
-            rec.start();
-          } catch {}
-        }
+        isListeningFallbackRef.current = false;
       };
 
       recognitionRef.current = rec;
       rec.start();
     } catch (err) {
-      console.error("Failed to start speech recognition:", err);
-      setStatus("idle");
+      console.warn("Fallback speech rec error:", err);
     }
   }, []);
 
-  const stopListening = useCallback(() => {
+  const handleFallbackVoiceTurn = async (promptText) => {
+    if (!promptText || promptText.trim().length === 0) return;
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (recognitionRef.current) {
       try {
         recognitionRef.current.abort();
       } catch {}
-      recognitionRef.current = null;
     }
-    isListeningRef.current = false;
-  }, []);
 
-  // Submit voice question and stream AI reply
-  const handleVoiceSubmit = async (promptText) => {
-    if (!promptText || promptText.trim().length === 0) return;
-    stopListening();
-    setStatus("thinking");
+    setStatus("ai_speaking");
+    setTranscripts((prev) => [
+      ...prev,
+      { id: `u-${Date.now()}`, role: "user", text: promptText, timestamp: new Date() },
+    ]);
 
-    let accumulatedText = "";
+    let accumulated = "";
 
     try {
-      await onSendMessage(
-        promptText,
-        {
+      if (onSendMessage) {
+        await onSendMessage(promptText, {
           onDelta: (delta) => {
-            accumulatedText += delta;
+            accumulated += delta;
           },
           onDone: () => {
-            // Once full response has arrived, speak it aloud in the detected language
-            setStatus("speaking");
-            const cleanText = cleanTextForSpeech(accumulatedText);
-            
-            // Detect language of the AI's response to select the matching native voice
+            setTranscripts((prev) => [
+              ...prev,
+              { id: `ai-${Date.now()}`, role: "assistant", text: accumulated, timestamp: new Date() },
+            ]);
+            const cleanText = cleanTextForSpeech(accumulated);
             const detectedLang = detectTextLanguage(cleanText);
-            const nativeVoice = getBestVoiceForLanguage(detectedLang, selectedVoiceURI);
+            const nativeVoice = getBestVoiceForLanguage(detectedLang);
 
             speakMessage(`voice-mode-${Date.now()}`, cleanText, {
               voice: nativeVoice,
               lang: detectedLang,
-              rate: speechRate,
+              rate: 1.05,
               onEnd: () => {
-                // Speech ended -> automatically resume listening loop
-                if (!isMutedRef.current) {
-                  setUserTranscript("");
-                  setAiTranscript("");
-                  setTimeout(() => {
-                    startListening();
-                  }, 350);
+                if (!isMuted) {
+                  setStatus("listening");
+                  setTimeout(startFallbackSpeechRec, 300);
                 } else {
                   setStatus("muted");
                 }
@@ -203,84 +235,180 @@ export default function VoiceModeModal({
             });
           },
           onError: (err) => {
-            setStatus("idle");
-            setTimeout(() => {
-              if (!isMutedRef.current) startListening();
-            }, 2000);
+            setStatus("error");
+            setErrorMessage(err || "Failed to process speech query.");
           },
-        }
-      );
+        });
+      }
     } catch (e) {
-      setStatus("idle");
+      setStatus("error");
+      setErrorMessage(e.message || "Failed to communicate with AI.");
     }
   };
 
-  // Interrupt AI speaking
-  const handleOrbClick = () => {
-    if (status === "speaking") {
-      stopSpeech();
-      setUserTranscript("");
-      setAiTranscript("");
-      if (!isMuted) {
-        startListening();
+  // -------------------------------------------------------------
+  // Controls (Mute, End Call, Barge-In)
+  // -------------------------------------------------------------
+  const handleToggleMute = async () => {
+    if (mode === "livekit") {
+      const newMuted = await livekitVoice.toggleMute();
+      setIsMuted(newMuted);
+    } else {
+      const nextMuted = !isMuted;
+      setIsMuted(nextMuted);
+      if (nextMuted) {
+        setStatus("muted");
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.abort();
+          } catch {}
+        }
+      } else {
+        setStatus("listening");
+        startFallbackSpeechRec();
       }
     }
   };
 
-  // Start listening automatically when modal opens
-  useEffect(() => {
-    if (isOpen && !isMuted) {
-      const timer = setTimeout(() => {
-        startListening();
-      }, 400);
-      return () => clearTimeout(timer);
+  const handleEndCall = () => {
+    cleanupSession();
+    onClose();
+  };
+
+  const handleOrbInterrupt = () => {
+    if (status === "ai_speaking") {
+      stopSpeech();
+      if (mode === "livekit") {
+        livekitVoice.enableMicrophone(true);
+      } else {
+        setStatus("listening");
+        startFallbackSpeechRec();
+      }
     }
-  }, [isOpen, isMuted, startListening]);
+  };
+
+  const cleanupSession = () => {
+    if (durationTimerRef.current) {
+      clearInterval(durationTimerRef.current);
+      durationTimerRef.current = null;
+    }
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {}
+      recognitionRef.current = null;
+    }
+    stopSpeech();
+    livekitVoice.disconnect();
+    setStatus("disconnected");
+  };
+
+  // -------------------------------------------------------------
+  // Modal Open / Close Lifecycle
+  // -------------------------------------------------------------
+  useEffect(() => {
+    if (isOpen) {
+      setTranscripts([]);
+      setCallDuration(0);
+      setErrorMessage("");
+
+      durationTimerRef.current = setInterval(() => {
+        setCallDuration((d) => d + 1);
+      }, 1000);
+
+      initLiveKitVoice();
+    } else {
+      cleanupSession();
+    }
+
+    return () => {
+      cleanupSession();
+    };
+  }, [isOpen, initLiveKitVoice]);
 
   if (!isOpen) return null;
 
+  // Status Labels & Glow
+  const getStatusDisplay = () => {
+    switch (status) {
+      case "connecting":
+        return { text: "Connecting...", dot: "#eab308" };
+      case "listening":
+        return { text: "Listening...", dot: "#10b981" };
+      case "user_speaking":
+        return { text: "You are speaking...", dot: "#3b82f6" };
+      case "ai_speaking":
+        return { text: "TharikAI is speaking...", dot: "#8b5cf6" };
+      case "muted":
+        return { text: "Microphone Muted", dot: "#ef4444" };
+      case "reconnecting":
+        return { text: "Reconnecting...", dot: "#f97316" };
+      case "error":
+        return { text: "Connection Error", dot: "#ef4444" };
+      default:
+        return { text: "Connected", dot: "#10b981" };
+    }
+  };
+
+  const statusInfo = getStatusDisplay();
+  const latestTranscript = transcripts[transcripts.length - 1];
+
   return (
-    <div className="voice-modal-overlay">
-      {/* Background ambient glow backdrop */}
+    <div className="voice-modal-overlay" role="dialog" aria-modal="true">
+      {/* Dynamic Ambient Background Glow */}
       <div className={`voice-ambient-glow glow-${status}`} />
 
       <div className="voice-modal-container">
-        {/* Top Close Button Only */}
-        <div className="voice-modal-header" style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", width: "100%", padding: "20px 24px" }}>
-          <button
-            type="button"
-            className="voice-close-btn"
-            onClick={onClose}
-            title="Exit voice mode"
-            aria-label="Exit voice mode"
-            style={{
-              background: "rgba(255, 255, 255, 0.08)",
-              border: "1px solid rgba(255, 255, 255, 0.12)",
-              color: "#94a3b8",
-              borderRadius: "50%",
-              width: "40px",
-              height: "40px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              transition: "all 0.15s ease",
-            }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+        {/* Top Header Controls */}
+        <div className="voice-modal-top-bar">
+          <div className="voice-call-info">
+            <span className="voice-status-pill">
+              <span className="voice-status-dot" style={{ backgroundColor: statusInfo.dot }} />
+              <span className="voice-status-text">{statusInfo.text}</span>
+            </span>
+            <span className="voice-duration-counter">{formatDuration(callDuration)}</span>
+          </div>
+
+          <div className="voice-top-actions">
+            {/* Live Transcript Toggle */}
+            <button
+              type="button"
+              className={`voice-action-icon-btn ${showTranscripts ? "active" : ""}`}
+              onClick={() => setShowTranscripts(!showTranscripts)}
+              title={showTranscripts ? "Hide Transcript" : "Show Transcript"}
+              aria-label="Toggle transcript"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </button>
+
+            {/* Close / End Voice Mode */}
+            <button
+              type="button"
+              className="voice-action-icon-btn voice-exit-btn"
+              onClick={handleEndCall}
+              title="End Voice Mode"
+              aria-label="Exit voice mode"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
         </div>
 
-        {/* Central Voice Orb & Dynamic Visualizer */}
+        {/* Center Section: Animated Visualizer Orb */}
         <div className="voice-orb-section">
           <div
             className={`voice-orb-wrapper orb-state-${status}`}
-            onClick={handleOrbClick}
-            title={status === "speaking" ? "Tap orb to interrupt" : "Voice Agent Active"}
-            style={{ cursor: status === "speaking" ? "pointer" : "default" }}
+            onClick={handleOrbInterrupt}
+            title={status === "ai_speaking" ? "Tap orb to interrupt AI" : "Realtime Voice Agent"}
           >
             {/* Pulsing Ripple Rings */}
             <div className="orb-ring ring-1" />
@@ -292,8 +420,8 @@ export default function VoiceModeModal({
               <div className="orb-inner-light" />
               <div className="orb-surface-shimmer" />
 
-              {/* Dynamic Equalizer Waves inside Orb */}
-              {status === "speaking" && (
+              {/* Dynamic Sound Equalizer Waves */}
+              {status === "ai_speaking" && (
                 <div className="orb-equalizer-bars">
                   <span className="eq-bar bar-1" />
                   <span className="eq-bar bar-2" />
@@ -302,13 +430,19 @@ export default function VoiceModeModal({
                 </div>
               )}
 
-              {status === "thinking" && (
-                <div className="orb-thinking-spinner" />
+              {status === "user_speaking" && (
+                <div className="orb-equalizer-bars user-wave">
+                  <span className="eq-bar bar-user-1" />
+                  <span className="eq-bar bar-user-2" />
+                  <span className="eq-bar bar-user-3" />
+                </div>
               )}
+
+              {status === "connecting" && <div className="orb-thinking-spinner" />}
 
               {status === "listening" && (
                 <div className="orb-listening-mic-icon">
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
                     <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                     <line x1="12" y1="19" x2="12" y2="22" />
@@ -317,8 +451,8 @@ export default function VoiceModeModal({
               )}
 
               {status === "muted" && (
-                <div className="orb-muted-icon" style={{ color: "#ef4444" }}>
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <div className="orb-muted-icon">
+                  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="1" y1="1" x2="23" y2="23" />
                     <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6" />
                     <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
@@ -328,6 +462,119 @@ export default function VoiceModeModal({
               )}
             </div>
           </div>
+
+          {/* Assistant Title & Status Feedback */}
+          <div className="voice-meta-header">
+            <h2 className="voice-title">THARIK AI</h2>
+            <p className="voice-subtitle">
+              {status === "ai_speaking"
+                ? "Speaking... (Tap orb to interrupt)"
+                : status === "user_speaking"
+                ? "Listening to your voice..."
+                : status === "muted"
+                ? "Microphone is muted"
+                : "Realtime Voice-to-Voice Active"}
+            </p>
+          </div>
+
+          {/* Subtitle / Live Floating Speech Bubble */}
+          {!showTranscripts && latestTranscript && (
+            <div className={`voice-live-bubble ${latestTranscript.role}`}>
+              <span className="bubble-speaker-label">
+                {latestTranscript.role === "user" ? "You" : "TharikAI"}
+              </span>
+              <p className="bubble-text">{latestTranscript.text}</p>
+            </div>
+          )}
+
+          {/* Error Banner */}
+          {errorMessage && (
+            <div className="voice-error-banner">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <span>{errorMessage}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Realtime Full Transcript Drawer */}
+        {showTranscripts && (
+          <div className="voice-transcript-drawer">
+            <div className="transcript-drawer-header">
+              <h3>Realtime Transcript</h3>
+              <button
+                type="button"
+                className="transcript-close-btn"
+                onClick={() => setShowTranscripts(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="transcript-list">
+              {transcripts.length === 0 ? (
+                <div className="transcript-empty">Speak naturally to begin transcript...</div>
+              ) : (
+                transcripts.map((t) => (
+                  <div key={t.id} className={`transcript-row ${t.role}`}>
+                    <span className="transcript-sender">
+                      {t.role === "user" ? "You" : "TharikAI"}
+                    </span>
+                    <p className="transcript-content">{t.text}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Bottom Call Controls Bar */}
+        <div className="voice-bottom-controls">
+          {/* Mute Toggle */}
+          <button
+            type="button"
+            className={`voice-control-btn ${isMuted ? "muted" : "unmuted"}`}
+            onClick={handleToggleMute}
+            title={isMuted ? "Unmute Microphone" : "Mute Microphone"}
+            aria-label={isMuted ? "Unmute microphone" : "Mute microphone"}
+          >
+            {isMuted ? (
+              <>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                  <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6" />
+                  <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                </svg>
+                <span>Unmute</span>
+              </>
+            ) : (
+              <>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                </svg>
+                <span>Mute</span>
+              </>
+            )}
+          </button>
+
+          {/* End Call Button */}
+          <button
+            type="button"
+            className="voice-control-btn end-call-btn"
+            onClick={handleEndCall}
+            title="End Voice Conversation"
+            aria-label="End voice conversation"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.1-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" />
+            </svg>
+            <span>End Call</span>
+          </button>
         </div>
       </div>
     </div>

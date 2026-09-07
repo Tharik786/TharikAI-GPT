@@ -178,16 +178,52 @@ export async function extractDocumentRemote(file) {
 }
 
 export async function generateImageRemote(prompt) {
+  const cleanPrompt = (prompt || "").trim();
+  if (!cleanPrompt) {
+    throw new Error("Prompt cannot be empty");
+  }
+
   const res = await fetch(`${BASE_URL}/api/image`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ prompt: cleanPrompt }),
   });
-  const data = await res.json().catch(() => ({}));
+
   if (!res.ok) {
-    throw new Error(data.detail || "Image generation failed.");
+    let errorDetail = "";
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const errJson = await res.json().catch(() => ({}));
+      errorDetail = errJson.detail || errJson.error || errJson.message || JSON.stringify(errJson);
+    } else {
+      errorDetail = await res.text().catch(() => "");
+    }
+
+    if (res.status === 401) {
+      throw new Error(`Authentication failed (401): ${errorDetail || "Invalid or missing API key."}`);
+    } else if (res.status === 403) {
+      throw new Error(`Access forbidden (403): ${errorDetail || "Insufficient permissions."}`);
+    } else if (res.status === 429) {
+      throw new Error(`Rate limit exceeded (429): ${errorDetail || "Too many requests. Please wait a moment."}`);
+    } else if (res.status >= 500) {
+      throw new Error(`Cloudflare Image API error (${res.status}): ${errorDetail || "Internal server error."}`);
+    } else {
+      throw new Error(`Image generation failed (${res.status}): ${errorDetail || res.statusText}`);
+    }
   }
-  return data;
+
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.startsWith("image/")) {
+    const textSample = await res.text().catch(() => "");
+    throw new Error(`Expected image binary response but received '${contentType}': ${textSample.slice(0, 120)}`);
+  }
+
+  // Read response as RAW PNG binary Blob (DO NOT call res.json())
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  return { objectUrl, blob, prompt: cleanPrompt };
 }
 
 export async function runDeepResearchRemote(query) {
@@ -202,6 +238,36 @@ export async function runDeepResearchRemote(query) {
   }
   return data;
 }
+
+export async function requestVoiceSession({ email, name, roomName, identity } = {}) {
+  const res = await fetch(`${BASE_URL}/api/voice/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: email || undefined,
+      name: name || undefined,
+      room_name: roomName || undefined,
+      identity: identity || undefined,
+    }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || data.error || `Voice session failed with status ${res.status}`);
+  }
+  return data;
+}
+
+export async function checkVoiceStatus() {
+  try {
+    const res = await fetch(`${BASE_URL}/api/voice/status`);
+    if (!res.ok) return { configured: false };
+    return await res.json();
+  } catch {
+    return { configured: false };
+  }
+}
+
 
 
 

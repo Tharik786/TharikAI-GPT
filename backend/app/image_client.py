@@ -2,6 +2,7 @@ import os
 import re
 import base64
 import httpx
+from fastapi import HTTPException
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -214,11 +215,62 @@ async def _generate_huggingface_flux(prompt: str, token: str) -> dict:
         }
 
 
+async def fetch_image_from_cloudflare(prompt: str) -> tuple[bytes, str]:
+    """
+    Directly queries the Cloudflare Worker image-generation API using server-side Bearer authentication.
+    Returns (raw_binary_bytes, content_type).
+    """
+    clean_prompt = prompt.strip()
+    if not clean_prompt:
+        raise HTTPException(status_code=400, detail="Image prompt cannot be empty.")
+
+    headers = {
+        "Authorization": f"Bearer {IMAGE_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "prompt": clean_prompt,
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
+            response = await client.post(IMAGE_API_URL, headers=headers, json=payload)
+        except httpx.TimeoutException:
+            raise HTTPException(
+                status_code=504,
+                detail="Image generation timed out after 120s. Please try again with a shorter prompt.",
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Unable to connect to Cloudflare Worker Image API: {str(e)}",
+            )
+
+        if response.status_code != 200:
+            error_detail = response.text[:300] if response.text else f"HTTP {response.status_code}"
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Cloudflare Image API error ({response.status_code}): {error_detail}",
+            )
+
+        # Detect image format by magic bytes or content-type
+        if response.content.startswith(b"\x89PNG"):
+            content_type = "image/png"
+        elif response.content.startswith(b"\xff\xd8\xff"):
+            content_type = "image/jpeg"
+        elif response.content.startswith(b"RIFF") and b"WEBP" in response.content[:16]:
+            content_type = "image/webp"
+        else:
+            ct = response.headers.get("content-type", "image/png")
+            content_type = ct if ct.startswith("image/") else "image/png"
+
+        return response.content, content_type
+
+
 async def generate_image_url(prompt: str) -> dict:
     """
-    Generates an AI image using Hugging Face FLUX.1 if HF_TOKEN is configured,
-    or falls back to the Cloudflare Worker image generation endpoint.
-    Converts binary response into a data URL for seamless frontend display.
+    Generates an AI image using Cloudflare Worker Image API or Hugging Face FLUX.1.
+    Converts binary response into a data URL for backward compatibility.
     """
     clean_prompt = prompt.strip()
 
@@ -229,39 +281,15 @@ async def generate_image_url(prompt: str) -> dict:
         except Exception as hf_err:
             print(f"Hugging Face FLUX.1 error, falling back to default worker: {hf_err}")
 
-    # 2. Default Cloudflare Worker Image API
-    headers = {
-        "Authorization": f"Bearer {IMAGE_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
+    # 2. Cloudflare Worker Image API
+    raw_bytes, content_type = await fetch_image_from_cloudflare(clean_prompt)
+    b64_data = base64.b64encode(raw_bytes).decode("utf-8")
+    data_url = f"data:{content_type};base64,{b64_data}"
+
+    return {
+        "success": True,
+        "provider": "cloudflare/flux",
         "prompt": clean_prompt,
+        "image_url": data_url,
+        "content_type": content_type,
     }
-
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        response = await client.post(IMAGE_API_URL, headers=headers, json=payload)
-        if response.status_code != 200:
-            raise Exception(f"Image API returned HTTP {response.status_code}: {response.text[:200]}")
-        
-        # Determine image format by magic bytes
-        if response.content.startswith(b"\x89PNG"):
-            content_type = "image/png"
-        elif response.content.startswith(b"\xff\xd8\xff"):
-            content_type = "image/jpeg"
-        elif response.content.startswith(b"RIFF") and b"WEBP" in response.content[:16]:
-            content_type = "image/webp"
-        else:
-            content_type = response.headers.get("content-type", "image/jpeg")
-            if not content_type.startswith("image/"):
-                content_type = "image/jpeg"
-
-        b64_data = base64.b64encode(response.content).decode("utf-8")
-        data_url = f"data:{content_type};base64,{b64_data}"
-
-        return {
-            "success": True,
-            "provider": "cloudflare/flux",
-            "prompt": clean_prompt,
-            "image_url": data_url,
-            "content_type": content_type,
-        }
