@@ -34,6 +34,16 @@ export default function App() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [voiceModeOpen, setVoiceModeOpen] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(() => {
+    return localStorage.getItem("tharikai_selected_model") || "openrouter/auto";
+  });
+
+  const handleSelectModel = (modelId) => {
+    setSelectedModel(modelId);
+    try {
+      localStorage.setItem("tharikai_selected_model", modelId);
+    } catch {}
+  };
 
   // Text-To-Speech state
   const [speechState, setSpeechState] = useState({
@@ -280,7 +290,13 @@ export default function App() {
           }
         },
       },
-      { webSearch, deepResearch, email: user?.email }
+      {
+        webSearch,
+        deepResearch,
+        email: user?.email,
+        model: selectedModel,
+        provider: selectedModel.includes("gemini") ? "gemini" : "openrouter",
+      }
     );
   };
 
@@ -529,7 +545,11 @@ export default function App() {
           setConversations(storage.list());
         },
       },
-      { webSearch: true }
+      {
+        webSearch: true,
+        model: selectedModel,
+        provider: selectedModel.includes("gemini") ? "gemini" : "openrouter",
+      }
     );
   };
 
@@ -570,6 +590,8 @@ export default function App() {
           onLogout={handleLogout}
           onToggleSidebar={() => setSidebarOpen(true)}
           onOpenVoiceMode={() => setVoiceModeOpen(true)}
+          selectedModel={selectedModel}
+          onSelectModel={handleSelectModel}
         />
 
         {error && <div className="error-banner">{error}</div>}

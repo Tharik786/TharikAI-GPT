@@ -5,10 +5,20 @@ import {
   speakMessage,
   stopSpeech,
   cleanTextForSpeech,
+  cleanRecognizedSpeech,
   getAvailableVoices,
   detectTextLanguage,
   getBestVoiceForLanguage,
 } from "../utils/speechService";
+
+export const VOICE_LANGUAGES = [
+  { code: "auto", name: "Auto", flag: "🌐", tag: (typeof navigator !== "undefined" && navigator.languages && navigator.languages[0]) || (typeof navigator !== "undefined" && navigator.language) || "en-US" },
+  { code: "ta", name: "தமிழ்", flag: "🇮🇳", tag: "ta-IN" },
+  { code: "ml", name: "മലയാളം", flag: "🇮🇳", tag: "ml-IN" },
+  { code: "en", name: "English", flag: "🇺🇸", tag: "en-US" },
+  { code: "hi", name: "हिन्दी", flag: "🇮🇳", tag: "hi-IN" },
+  { code: "te", name: "తెలుగు", flag: "🇮🇳", tag: "te-IN" },
+];
 
 export default function VoiceModeModal({
   isOpen,
@@ -17,6 +27,9 @@ export default function VoiceModeModal({
   activeConversationTitle = "Live Voice Session",
   user = null,
 }) {
+  const [spokenLang, setSpokenLang] = useState(() => {
+    return (typeof localStorage !== "undefined" && localStorage.getItem("tharikai_voice_lang")) || "auto";
+  });
   const [mode, setMode] = useState("livekit"); // 'livekit' | 'browser_fallback'
   const [status, setStatus] = useState("connecting"); // 'connecting' | 'listening' | 'user_speaking' | 'ai_speaking' | 'muted' | 'reconnecting' | 'disconnected' | 'error'
   const [errorMessage, setErrorMessage] = useState("");
@@ -29,6 +42,7 @@ export default function VoiceModeModal({
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
   const isListeningFallbackRef = useRef(false);
+  const latestSpeechTextRef = useRef("");
 
   // Format duration mm:ss
   const formatDuration = (secs) => {
@@ -139,7 +153,10 @@ export default function VoiceModeModal({
       const rec = new SpeechRec();
       rec.continuous = true;
       rec.interimResults = true;
-      rec.lang = "en-US";
+      
+      const targetCode = overrideLang || spokenLang;
+      const langObj = VOICE_LANGUAGES.find((l) => l.code === targetCode) || VOICE_LANGUAGES[0];
+      rec.lang = langObj.tag;
 
       rec.onstart = () => {
         isListeningFallbackRef.current = true;
@@ -147,24 +164,40 @@ export default function VoiceModeModal({
       };
 
       rec.onresult = (event) => {
-        let interim = "";
-        let final = "";
+        let finalStr = "";
+        let interimStr = "";
 
         for (let i = 0; i < event.results.length; i++) {
-          const result = event.results[i];
-          if (result.isFinal) final += result[0].transcript;
-          else interim += result[0].transcript;
+          const res = event.results[i];
+          if (!res || !res[0]) continue;
+          const chunk = (res[0].transcript || "").trim();
+          if (!chunk) continue;
+
+          if (res.isFinal) {
+            finalStr = finalStr ? `${finalStr} ${chunk}` : chunk;
+          } else {
+            interimStr = interimStr ? `${interimStr} ${chunk}` : chunk;
+          }
         }
 
-        const currentText = (final || interim).trim();
-        if (currentText) {
+        let rawCombined = finalStr;
+        if (interimStr) {
+          rawCombined = finalStr ? `${finalStr} ${interimStr}` : interimStr;
+        }
+
+        const cleanedText = cleanRecognizedSpeech(rawCombined);
+
+        if (cleanedText && cleanedText.length >= 2) {
           setStatus("user_speaking");
+          latestSpeechTextRef.current = cleanedText;
+
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = setTimeout(() => {
-            if (isListeningFallbackRef.current && currentText.length >= 2) {
-              handleFallbackVoiceTurn(currentText);
+            const textToSend = latestSpeechTextRef.current;
+            if (isListeningFallbackRef.current && textToSend && textToSend.length >= 2) {
+              handleFallbackVoiceTurn(textToSend);
             }
-          }, 1100);
+          }, 1200);
         }
       };
 
@@ -189,13 +222,18 @@ export default function VoiceModeModal({
   }, []);
 
   const handleFallbackVoiceTurn = async (promptText) => {
-    if (!promptText || promptText.trim().length === 0) return;
+    const cleanPrompt = cleanRecognizedSpeech(promptText);
+    if (!cleanPrompt || cleanPrompt.length < 2) return;
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    latestSpeechTextRef.current = "";
+
     if (recognitionRef.current) {
       try {
         recognitionRef.current.abort();
       } catch {}
+      recognitionRef.current = null;
     }
+    isListeningFallbackRef.current = false;
 
     setStatus("ai_speaking");
     setTranscripts((prev) => [
@@ -227,22 +265,39 @@ export default function VoiceModeModal({
               onEnd: () => {
                 if (!isMuted) {
                   setStatus("listening");
-                  setTimeout(startFallbackSpeechRec, 300);
-                } else {
-                  setStatus("muted");
+                  setTimeout(() => startFallbackSpeechRec(), 300);
                 }
               },
             });
           },
           onError: (err) => {
+            setErrorMessage(err);
             setStatus("error");
-            setErrorMessage(err || "Failed to process speech query.");
           },
         });
       }
     } catch (e) {
-      setStatus("error");
-      setErrorMessage(e.message || "Failed to communicate with AI.");
+      console.error("Voice turn error:", e);
+      setStatus("listening");
+      setTimeout(() => startFallbackSpeechRec(), 400);
+    }
+  };
+
+  const handleLanguageChange = (code) => {
+    setSpokenLang(code);
+    try {
+      localStorage.setItem("tharikai_voice_lang", code);
+    } catch {}
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {}
+      recognitionRef.current = null;
+    }
+    if (!isMuted && status !== "ai_speaking") {
+      setTimeout(() => {
+        startFallbackSpeechRec(code);
+      }, 100);
     }
   };
 
@@ -401,6 +456,22 @@ export default function VoiceModeModal({
               </svg>
             </button>
           </div>
+        </div>
+
+        {/* Multilingual Voice Language Bar */}
+        <div className="voice-lang-bar" role="radiogroup" aria-label="Spoken language">
+          {VOICE_LANGUAGES.map((lang) => (
+            <button
+              key={lang.code}
+              type="button"
+              className={`voice-lang-pill ${spokenLang === lang.code ? "active" : ""}`}
+              onClick={() => handleLanguageChange(lang.code)}
+              title={`Speak in ${lang.name}`}
+            >
+              <span className="lang-pill-flag">{lang.flag}</span>
+              <span className="lang-pill-name">{lang.name}</span>
+            </button>
+          ))}
         </div>
 
         {/* Center Section: Animated Visualizer Orb */}

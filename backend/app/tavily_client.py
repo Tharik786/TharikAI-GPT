@@ -25,24 +25,25 @@ TIME_SENSITIVE_PATTERNS = [
 
 COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in TIME_SENSITIVE_PATTERNS]
 
-# Conversational queries that should NEVER trigger web search latency
+# Conversational queries (pure standalone greetings/identity) that should not trigger web search
 CONVERSATIONAL_EXCLUSIONS = re.compile(
-    r"^\s*(?:who are you|who made you|who created you|what is your name|how are you|hello|hi|hey|good morning|good evening|who am i|tell me a joke|write a story|write code|explain|help me)\b",
+    r"^\s*(?:who are you|who made you|who created you|what is your name|how are you|hello|hi|hey|good morning|good evening|who am i|tell me a joke)\s*[\.?!]*$",
     re.IGNORECASE,
 )
 
 
 def should_auto_search(query: str) -> bool:
     """
-    Checks if a query genuinely requires real-time web search.
-    Prevents unnecessary search latency on normal conversational or coding queries.
+    Checks if a query should search the live web.
+    Defaults to True for any question, topic, or search query.
+    Only excludes standalone greetings or bot-identity questions.
     """
-    if not query or len(query.strip()) < 3:
+    if not query or len(query.strip()) < 2:
         return False
     q = query.strip()
     if CONVERSATIONAL_EXCLUSIONS.search(q):
         return False
-    return any(pattern.search(q) for pattern in COMPILED_PATTERNS)
+    return True
 
 
 async def search_tavily(query: str, max_results: int = 5) -> dict:
@@ -67,9 +68,10 @@ async def search_tavily(query: str, max_results: int = 5) -> dict:
         "api_key": api_key,
         "query": clean_query,
         "search_depth": "basic",
-        "include_answer": False,
+        "include_answer": True,
         "include_images": False,
-        "max_results": min(max_results, 3),
+        "exclude_domains": ["youtube.com", "instagram.com", "facebook.com", "twitter.com", "x.com", "tiktok.com"],
+        "max_results": max(1, min(max_results, 5)),
     }
 
     try:
@@ -165,9 +167,10 @@ def format_search_context(search_data: dict) -> str:
 
     lines.append(
         "CRITICAL INSTRUCTIONS FOR AI ASSISTANT:\n"
-        "- Use the fresh, real-time web search results above to answer the user's question accurately.\n"
-        "- Do NOT claim that your knowledge is cut off or that you cannot browse the internet.\n"
-        "- Cite sources naturally with markdown links, e.g. [Source Title](URL) or numbered references [1], [2] when stating factual claims.\n"
+        "- Base your answer directly on the fresh real-time web search results provided above.\n"
+        "- Always provide current news, up-to-date facts, and verified real-world information.\n"
+        "- Never claim that your knowledge is cut off or that you cannot access current information.\n"
+        "- Cite sources with markdown links, e.g. [Source Title](URL) or numbered references [1], [2].\n"
         "--- END OF REAL-TIME SEARCH RESULTS ---"
     )
 

@@ -18,19 +18,29 @@ def get_system_prompt() -> str:
     now_str = datetime.datetime.now().strftime("%A, %B %d, %Y, %H:%M:%S UTC")
     return (
         f"You are a helpful, friendly, empathetic, and highly intelligent AI assistant (TharikAI).\n\n"
-        f"=== CORE LANGUAGE & VOICE INTELLIGENCE RULES ===\n"
-        f"1. DEFAULT LANGUAGE: English (en-US) is your primary default language.\n"
-        f"2. MULTILINGUAL SPOKEN & CHAT UNDERSTANDING:\n"
-        f"   - You possess native fluency in every global language and regional dialect (English, Tamil, Hindi, Telugu, Malayalam, Kannada, Bengali, Gujarati, Marathi, Punjabi, Urdu, Arabic, Spanish, French, German, Italian, Portuguese, Russian, Japanese, Chinese, Korean, Turkish, Indonesian, Vietnamese, Thai, etc.).\n"
-        f"   - If the user speaks or writes to you in English (default), reply in English.\n"
-        f"   - If the user speaks or writes in another language (e.g. Tamil, Hindi, Arabic, Spanish, French, etc.), automatically understand and reply in that exact same language.\n\n"
-        f"3. VOICE-FRIENDLY & CONVERSATIONAL RESPONSES:\n"
-        f"   - Keep spoken voice explanations clean, natural, and conversational so speech synthesis reads them aloud smoothly and clearly.\n"
-        f"   - For general chat, format answers with clean Markdown (headings, bullet points, and code blocks with syntax highlighting) when helpful for readability.\n\n"
-        f"4. AI IMAGE GENERATION:\n"
-        f"   - You have built-in AI image generation features. When asked to generate, create, draw, or make an image/art/photo/logo, describe what is being rendered or confirm visual generation.\n\n"
+        f"=== STRICT MULTILINGUAL VOICE & LANGUAGE MIRRORING RULES ===\n"
+        f"1. INSTANT LANGUAGE MIRRORING (CRITICAL):\n"
+        f"   - ALWAYS respond in the EXACT SAME LANGUAGE the user speaks or writes in!\n"
+        f"   - If the user speaks or writes in TAMIL (தமிழ் or Tanglish):\n"
+        f"     You MUST reply completely in TAMIL (தமிழ்) with warm, natural Tamil phrasing (e.g. 'வணக்கம்! நான் உங்களுக்கு எப்படி உதவ முடியும்?').\n"
+        f"   - If the user speaks or writes in MALAYALAM (മലയാളം or Manglish):\n"
+        f"     You MUST reply completely in MALAYALAM (മലയാളം) with natural Malayalam phrasing (e.g. 'നമസ്കാരം! ഞാൻ നിങ്ങളെ എങ്ങനെയാണ് സഹായിക്കേണ്ടത്?').\n"
+        f"   - If the user speaks or writes in ENGLISH:\n"
+        f"     You MUST reply in ENGLISH.\n"
+        f"   - If the user speaks or writes in HINDI (हिन्दी):\n"
+        f"     You MUST reply in HINDI (हिन्दी) (e.g. 'नमस्ते! मैं आपकी कैसे सहायता कर सकता हूँ?').\n"
+        f"   - If the user speaks in Telugu, Kannada, Bengali, Arabic, Spanish, French, or any other language, reply in that exact same language!\n"
+        f"   - NEVER reply in English when the user addresses you in Tamil, Malayalam, or another regional language.\n\n"
+        f"2. VOICE-FRIENDLY & CONVERSATIONAL RESPONSES:\n"
+        f"   - Keep spoken voice explanations natural, concise, and conversational so the native Text-to-Speech voice engine can pronounce every word smoothly.\n"
+        f"   - Avoid raw symbols or long complex markdown tables during voice mode.\n\n"
+        f"3. AI IMAGE GENERATION:\n"
+        f"   - When asked to generate an image or art, describe the visual creation politely.\n\n"
+        f"4. REAL-TIME INTERNET SEARCH & CURRENT NEWS:\n"
+        f"   - When live web search results are provided in your context, always ground your response in the real-time internet results.\n"
+        f"   - Report current news, factual updates, and real-world information accurately as verified by authoritative web sources.\n"
+        f"   - Cite sources naturally using markdown links e.g. [Source Title](URL) or [1], [2].\n\n"
         f"Tone: Natural, warm, polite, culturally appropriate, and concise.\n"
-        f"Current Date and Time: {now_str}.\n"
     )
 
 
@@ -68,9 +78,12 @@ def _get_http_client() -> httpx.AsyncClient:
 
 
 async def _stream_openrouter(
-    api_key: str, messages: list[dict], system_prompt: str = SYSTEM_PROMPT
+    api_key: str,
+    messages: list[dict],
+    system_prompt: str = SYSTEM_PROMPT,
+    model: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    model = os.getenv("OPENROUTER_MODEL") or os.getenv("AI_MODEL", "openrouter/auto")
+    target_model = model or os.getenv("OPENROUTER_MODEL") or os.getenv("AI_MODEL", "openrouter/auto")
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -95,7 +108,7 @@ async def _stream_openrouter(
             contents.append({"role": role, "content": msg_text})
 
     payload = {
-        "model": model,
+        "model": target_model,
         "messages": contents,
         "stream": True,
     }
@@ -120,20 +133,24 @@ async def _stream_openrouter(
                 break
             try:
                 data = json.loads(data_str)
-                delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                if delta:
-                    yield delta
+                delta = data.get("choices", [{}])[0].get("delta", {})
+                content = delta.get("content", "") if isinstance(delta, dict) else str(delta or "")
+                if content:
+                    yield content
             except json.JSONDecodeError:
                 continue
 
 
 async def _stream_gemini(
-    api_key: str, messages: list[dict], system_prompt: str = SYSTEM_PROMPT
+    api_key: str,
+    messages: list[dict],
+    system_prompt: str = SYSTEM_PROMPT,
+    model: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+    target_model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{model}:streamGenerateContent?alt=sse&key={api_key}"
+        f"{target_model}:streamGenerateContent?alt=sse&key={api_key}"
     )
 
     contents = []
@@ -285,10 +302,12 @@ async def _stream_huggingface_chat(
 async def stream_chat_completion(
     messages: list[dict],
     web_search_context: str = "",
+    model: str | None = None,
+    provider: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Yields text chunks as they arrive from OpenRouter, Hugging Face, or Google Gemini.
-    Automatically detects the provider based on the key format or env vars.
+    Automatically routes based on provider/model selection, key format, or env vars.
     Supports Multimodal Vision and Web Search grounding.
     """
     hf_token = os.getenv("HF_TOKEN", os.getenv("HUGGINGFACE_API_KEY", "")).strip()
@@ -301,8 +320,30 @@ async def stream_chat_completion(
     if web_search_context:
         system_prompt = f"{system_prompt}\n\n{web_search_context}"
 
-    # 1. Hugging Face Chat Model (e.g. SHSLab/Kimi-K3-Abliterated)
-    if hf_token and hf_chat_model:
+    req_provider = (provider or "").lower().strip()
+    req_model = (model or "").strip()
+
+    # 1. Explicit OpenRouter / Ask AI Efficient request
+    if req_provider in ("openrouter", "efficient") or req_model.startswith("openrouter/") or (req_model and "/" in req_model):
+        if openrouter_key:
+            async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt, model=req_model or None):
+                yield chunk
+            return
+        elif not gemini_key and not generic_key:
+            raise GeminiError("OpenRouter API key is not configured. Please add OPENROUTER_API_KEY in backend .env.")
+
+    # 2. Explicit Gemini request
+    if req_provider == "gemini" or req_model.startswith("gemini"):
+        key = gemini_key or generic_key
+        if key:
+            async for chunk in _stream_gemini(key, messages, system_prompt=system_prompt, model=req_model or None):
+                yield chunk
+            return
+        elif not openrouter_key:
+            raise GeminiError("Gemini API key is not configured. Please add GEMINI_API_KEY in backend .env.")
+
+    # 3. Hugging Face Chat Model (e.g. SHSLab/Kimi-K3-Abliterated)
+    if hf_token and hf_chat_model and req_provider in ("hf", "huggingface"):
         try:
             async for chunk in _stream_huggingface_chat(hf_token, hf_chat_model, messages, system_prompt=system_prompt):
                 yield chunk
@@ -310,25 +351,25 @@ async def stream_chat_completion(
         except Exception as hf_err:
             print(f"Hugging Face chat stream fallback note: {hf_err}")
 
-    # 2. OpenRouter provider
-    if openrouter_key:
-        async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt):
+    # 4. OpenRouter provider (default efficient provider)
+    if openrouter_key and req_provider != "gemini":
+        async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt, model=req_model or None):
             yield chunk
         return
 
-    # 3. Gemini / Default provider
+    # 5. Gemini / Default provider fallback
     key = gemini_key or generic_key
     if not key:
         raise GeminiError(
-            "No AI API key is configured. Please add GEMINI_API_KEY or OPENROUTER_API_KEY in your Render dashboard."
+            "No AI API key is configured. Please add GEMINI_API_KEY or OPENROUTER_API_KEY in backend .env or Render dashboard."
         )
 
     # If the key has the OpenRouter prefix sk-or-, route to OpenRouter
     if key.startswith("sk-or-"):
-        async for chunk in _stream_openrouter(key, messages, system_prompt=system_prompt):
+        async for chunk in _stream_openrouter(key, messages, system_prompt=system_prompt, model=req_model or None):
             yield chunk
     else:
-        async for chunk in _stream_gemini(key, messages, system_prompt=system_prompt):
+        async for chunk in _stream_gemini(key, messages, system_prompt=system_prompt, model=req_model or None):
             yield chunk
 
 

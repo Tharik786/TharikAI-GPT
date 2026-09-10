@@ -1,53 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import { extractFileContent } from "../utils/documentExtractor.js";
-
-// Smart transcript merger to prevent Web Speech API doubling / tripling bugs across browsers
-function mergeTranscriptChunks(chunks) {
-  let finalStr = "";
-  for (let chunk of chunks) {
-    chunk = (chunk || "").trim();
-    if (!chunk) continue;
-    if (!finalStr) {
-      finalStr = chunk;
-      continue;
-    }
-
-    // Ignore exact duplicates or if finalStr already ends with this chunk
-    if (finalStr === chunk || finalStr.endsWith(" " + chunk) || finalStr.endsWith(chunk)) {
-      continue;
-    }
-
-    // If chunk contains the entire previous finalStr (cumulative result bug in some mobile browsers)
-    if (chunk.startsWith(finalStr)) {
-      finalStr = chunk;
-      continue;
-    }
-
-    // Check for word-level suffix/prefix overlap between chunks
-    const finalWords = finalStr.split(/\s+/);
-    const chunkWords = chunk.split(/\s+/);
-    let overlapFound = false;
-    const maxOverlap = Math.min(finalWords.length, chunkWords.length);
-
-    for (let len = maxOverlap; len > 0; len--) {
-      const endWords = finalWords.slice(-len).join(" ").toLowerCase();
-      const startWords = chunkWords.slice(0, len).join(" ").toLowerCase();
-      if (endWords === startWords) {
-        const nonOverlapping = chunkWords.slice(len).join(" ");
-        if (nonOverlapping) {
-          finalStr += " " + nonOverlapping;
-        }
-        overlapFound = true;
-        break;
-      }
-    }
-
-    if (!overlapFound) {
-      finalStr += " " + chunk;
-    }
-  }
-  return finalStr;
-}
+import { cleanRecognizedSpeech } from "../utils/speechService.js";
 
 export default function InputBar({
   value,
@@ -64,6 +17,7 @@ export default function InputBar({
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(true);
+  const [webSearchActive, setWebSearchActive] = useState(true);
 
   const recognitionRef = useRef(null);
   const baseTextRef = useRef("");
@@ -116,7 +70,9 @@ export default function InputBar({
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = "en-US";
+      // Auto-detect regional accent language (e.g. en-IN, en-GB, en-US) for accurate phonetics
+      const userLang = (navigator.languages && navigator.languages[0]) || navigator.language || "en-US";
+      recognition.lang = userLang;
 
       // Save whatever text was already typed before starting voice input
       baseTextRef.current = (valueRef.current || "").trim();
@@ -126,39 +82,33 @@ export default function InputBar({
       };
 
       recognition.onresult = (event) => {
-        const finalChunks = [];
-        const interimChunks = [];
+        let finalStr = "";
+        let interimStr = "";
 
         for (let i = 0; i < event.results.length; ++i) {
           const res = event.results[i];
           if (!res || !res[0]) continue;
-
-          const transcript = res[0].transcript || "";
-          const confidence = res[0].confidence;
+          const chunk = (res[0].transcript || "").trim();
+          if (!chunk) continue;
 
           // Ignore duplicate results with 0 confidence (known Android Chrome bug)
-          if (confidence !== undefined && confidence === 0 && res.isFinal) {
+          if (res[0].confidence !== undefined && res[0].confidence === 0 && res.isFinal) {
             continue;
           }
 
           if (res.isFinal) {
-            finalChunks.push(transcript);
+            finalStr = finalStr ? `${finalStr} ${chunk}` : chunk;
           } else {
-            interimChunks.push(transcript);
+            interimStr = interimStr ? `${interimStr} ${chunk}` : chunk;
           }
         }
 
-        const finalSpeech = mergeTranscriptChunks(finalChunks);
-        const interimSpeech = mergeTranscriptChunks(interimChunks);
-
-        let spokenText = finalSpeech;
-        if (interimSpeech) {
-          if (!spokenText) {
-            spokenText = interimSpeech;
-          } else {
-            spokenText = mergeTranscriptChunks([spokenText, interimSpeech]);
-          }
+        let rawCombined = finalStr;
+        if (interimStr) {
+          rawCombined = finalStr ? `${finalStr} ${interimStr}` : interimStr;
         }
+
+        const spokenText = cleanRecognizedSpeech(rawCombined);
 
         const base = baseTextRef.current;
         const updated = base
@@ -344,6 +294,7 @@ export default function InputBar({
     onSend({
       text: value.trim(),
       attachments: [...attachments],
+      webSearch: webSearchActive,
     });
 
     setAttachments([]);
@@ -466,6 +417,22 @@ export default function InputBar({
             onKeyDown={handleKeyDown}
           />
         </div>
+
+        {/* Real-time Web Search Toggle */}
+        <button
+          type="button"
+          className={`web-search-toggle-btn ${webSearchActive ? "active" : ""}`}
+          onClick={() => setWebSearchActive(!webSearchActive)}
+          aria-label={webSearchActive ? "Web Search: Enabled" : "Web Search: Disabled"}
+          title={
+            webSearchActive
+              ? "Web Search: ON (Real-time live internet answers for every question)"
+              : "Web Search: OFF (Pure LLM model)"
+          }
+        >
+          <GlobeIcon />
+          <span className="web-search-label">{webSearchActive ? "Search" : "Off"}</span>
+        </button>
 
         {/* Voice-to-text Microphone Button */}
         <button
@@ -595,6 +562,26 @@ function PaletteIcon() {
     </svg>
   );
 }
+
+function GlobeIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  );
+}
+
 
 
 

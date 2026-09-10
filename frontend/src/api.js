@@ -10,7 +10,7 @@ const BASE_URL = (RAW_URL ? RAW_URL.trim().replace(/\/+$/, "") : "") || "https:/
 export async function streamChat(
   messages,
   { onDelta, onDone, onError, onSources, onStatus },
-  { webSearch = true, deepResearch = false, email = null } = {}
+  { webSearch = true, deepResearch = false, email = null, model = null, provider = null } = {}
 ) {
   let res;
   try {
@@ -22,6 +22,8 @@ export async function streamChat(
         web_search: !!webSearch,
         deep_research: !!deepResearch,
         email: email || undefined,
+        model: model || undefined,
+        provider: provider || undefined,
       }),
     });
   } catch {
@@ -268,8 +270,32 @@ export async function checkVoiceStatus() {
   }
 }
 
-
-
-
-
-
+export async function getAvailableModels() {
+  try {
+    const res = await fetch(`${BASE_URL}/api/models`);
+    if (!res.ok) throw new Error("Failed to fetch models");
+    return await res.json();
+  } catch {
+    return {
+      models: [
+        {
+          id: "openrouter/auto",
+          name: "Ask AI Efficient",
+          provider: "openrouter",
+          badge: "Efficient",
+          description: "Ultra-fast & smart, cost-efficient AI powered by OpenRouter",
+          isDefault: true,
+        },
+        {
+          id: "gemini-3.6-flash",
+          name: "TharikAI Pro (Gemini)",
+          provider: "gemini",
+          badge: "Pro",
+          description: "Google Gemini 3.6 Flash with deep multimodal vision & reasoning",
+          isDefault: false,
+        },
+      ],
+      default_model: "openrouter/auto",
+    };
+  }
+}

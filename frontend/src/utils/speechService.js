@@ -221,10 +221,13 @@ export function detectTextLanguage(text = "") {
   // 2. Transliterated Indian language distinctive keywords
   const lower = " " + str.toLowerCase().replace(/[^\w\s]/g, " ") + " ";
 
-  if (/\b(vanakkam|eppadi irukkinga|solla mudiyuma|nandri|unggalukku|thambi|seri thambi|aama pa)\b/i.test(lower)) {
+  if (/\b(vanakkam|eppadi irukkinga|eppadi irukkeenga|solla mudiyuma|nandri|unggalukku|thambi|seri thambi|aama pa|enna vishayam|sollunga|enakku)\b/i.test(lower)) {
     return "ta";
   }
-  if (/\b(namaste|kaise ho|dhanyawad|shukriya|kya haal|theek hai|bataiye|aapka swagat)\b/i.test(lower)) {
+  if (/\b(namaskaram|enthokke|sukhamano|sukhamanu|enthaanu|nanni|visheshangal|chetta|chechi|evideyaanu|ariyilla|samsarikku|njan|ningal)\b/i.test(lower)) {
+    return "ml";
+  }
+  if (/\b(namaste|kaise ho|dhanyawad|shukriya|kya haal|theek hai|bataiye|aapka swagat|kya kar rahe)\b/i.test(lower)) {
     return "hi";
   }
 
@@ -513,3 +516,46 @@ export function getCurrentSpeechState() {
     rate: currentRate,
   };
 }
+
+/**
+ * Normalizes speech recognition transcripts by eliminating:
+ * - Browser STT stuttering & unspaced repetition (e.g. "hihih", "hihhhh", "iamam")
+ * - Repeated consecutive duplicate words (e.g. "hi hi hi" -> "Hi", "iam iam" -> "I am")
+ * - Trailing consonant repetitions (e.g. "harissh" -> "Harish", "hihhhh" -> "hi")
+ * - Formats proper spacing, capitalization ("i" -> "I", sentence start)
+ */
+export function cleanRecognizedSpeech(raw = "") {
+  if (!raw || typeof raw !== "string") return "";
+
+  let text = raw.trim();
+
+  // 1. Normalize common unspaced phonetic STT glitches
+  text = text.replace(/\b(?:h+i+)+h*\b/gi, "Hi");
+  text = text.replace(/\b(?:i+\s*a+m+\s*a*m*|i+a+m+a*m*)\b/gi, "I am");
+  text = text.replace(/\b(?:i+\s*a+m+)\b/gi, "I am");
+  text = text.replace(/\ba+m+a*m*\b/gi, "am");
+
+  // 2. Reduce 3+ consecutive duplicate letters (e.g. "hihhhh" -> "hi", "heeeey" -> "hey")
+  text = text.replace(/([a-zA-Z])\1{2,}/g, "$1");
+
+  // 3. Remove consecutive duplicate words: e.g. "hi hi hi" -> "hi", "iam iam" -> "I am"
+  text = text.replace(/\b([A-Za-z0-9']+)(?:\s+\1\b)+/gi, "$1");
+
+  // 4. Handle "I" / "I'm" proper capitalization
+  text = text.replace(/\b(i)\b/g, "I");
+  text = text.replace(/\bi'm\b/gi, "I'm");
+
+  // 5. Specific common phonetic and name corrections
+  text = text.replace(/\bharissh\b/gi, "Harish");
+
+  // 6. Clean up extra spaces
+  text = text.replace(/\s+/g, " ").trim();
+
+  // 7. Capitalize first letter of sentence
+  if (text.length > 0) {
+    text = text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  return text;
+}
+

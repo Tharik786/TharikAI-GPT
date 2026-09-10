@@ -82,9 +82,11 @@ class ChatMessage(BaseModel):
 
 class ChatBody(BaseModel):
     messages: list[ChatMessage]
-    web_search: bool | None = False
+    web_search: bool | None = True
     deep_research: bool | None = False
     email: str | None = None
+    model: str | None = None
+    provider: str | None = None
 
 
 class SearchBody(BaseModel):
@@ -149,6 +151,34 @@ async def health():
     return {
         "status": "ok" if db_status == "connected" else "degraded",
         "database": db_status,
+    }
+
+
+@app.get("/api/models")
+async def get_models():
+    """
+    Returns the list of available AI models and their capabilities.
+    """
+    return {
+        "models": [
+            {
+                "id": "openrouter/auto",
+                "name": "Ask AI Efficient",
+                "provider": "openrouter",
+                "badge": "Efficient",
+                "description": "Ultra-fast & smart, cost-efficient AI powered by OpenRouter",
+                "isDefault": True,
+            },
+            {
+                "id": "gemini-3.6-flash",
+                "name": "TharikAI Pro (Gemini)",
+                "provider": "gemini",
+                "badge": "Pro",
+                "description": "Google Gemini 3.6 Flash with deep multimodal vision & reasoning",
+                "isDefault": False,
+            },
+        ],
+        "default_model": "openrouter/auto",
     }
 
 
@@ -430,6 +460,8 @@ async def chat(body: ChatBody):
                     async for chunk in stream_chat_completion(
                         llm_messages,
                         web_search_context=deep_context,
+                        model=body.model,
+                        provider=body.provider,
                     ):
                         yield f"data: {json.dumps({'delta': chunk})}\n\n"
                     yield f"data: {json.dumps({'done': True})}\n\n"
@@ -456,6 +488,8 @@ async def chat(body: ChatBody):
             async for chunk in stream_chat_completion(
                 llm_messages,
                 web_search_context=search_context,
+                model=body.model,
+                provider=body.provider,
             ):
                 yield f"data: {json.dumps({'delta': chunk})}\n\n"
         except GeminiError as e:

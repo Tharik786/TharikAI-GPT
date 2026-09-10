@@ -821,7 +821,42 @@ function MessageBubble({
           </div>
         )}
 
+        {/* Real-time Web Search Status indicator */}
+        {searchStatus && (
+          <div className="message-search-status">
+            <span className="search-status-spinner" />
+            <span className="search-status-text">{searchStatus}</span>
+          </div>
+        )}
 
+        {/* Verified Web Sources Carousel/Pills */}
+        {sources && sources.length > 0 && (
+          <div className="message-sources-wrapper">
+            <div className="sources-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="2" y1="12" x2="22" y2="12" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+              </svg>
+              <span>{sources.length} Sources</span>
+            </div>
+            <div className="sources-chips-list">
+              {sources.map((s, idx) => (
+                <a
+                  key={idx}
+                  href={s.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="source-chip"
+                  title={`${s.title}\n${s.url}`}
+                >
+                  <span className="source-domain">{s.domain || "web"}</span>
+                  <span className="source-title">{s.title}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
 
         {cleanText ? (
           <div className="markdown-content">
