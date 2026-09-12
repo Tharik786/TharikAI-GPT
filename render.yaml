@@ -8,3 +8,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.0
+      - key: SERVE_FRONTEND
+        value: "false"
+      - key: AUTO_RUN_FRONTEND
+        value: "false"
+      - key: CORS_ORIGINS
+        value: "https://tharikai.netlify.app"
