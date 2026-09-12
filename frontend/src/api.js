@@ -1,6 +1,7 @@
-// Force relative URLs so requests are routed through the Vite dev proxy (local) 
-// or the Netlify proxy (production), avoiding CORS issues entirely.
-const BASE_URL = "";
+const RAW_URL = import.meta.env.VITE_API_URL;
+// When VITE_API_URL is empty or not provided, default to "" (relative URL) so frontend works
+// seamlessly with both FastAPI same-origin serving (port 8000) and Vite dev server proxy (port 5173).
+const BASE_URL = RAW_URL ? RAW_URL.trim().replace(/\/+$/, "") : "";
 
 /**
  * Streams an assistant reply for the given message history via SSE.
