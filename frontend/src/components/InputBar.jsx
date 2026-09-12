@@ -7,17 +7,13 @@ export default function InputBar({
   onChange,
   onSend,
   disabled,
-  onOpenVoiceMode,
 }) {
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
-  const menuRef = useRef(null);
 
   const [attachments, setAttachments] = useState([]);
-  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(true);
-  const [webSearchActive, setWebSearchActive] = useState(true);
 
   const recognitionRef = useRef(null);
   const baseTextRef = useRef("");
@@ -25,6 +21,10 @@ export default function InputBar({
 
   useEffect(() => {
     valueRef.current = value;
+    if (textareaRef.current && (value === "" || value === undefined || value === null)) {
+      textareaRef.current.value = "";
+      textareaRef.current.style.height = "auto";
+    }
   }, [value]);
 
   // Check Web Speech API availability on mount
@@ -161,18 +161,7 @@ export default function InputBar({
     }
   };
 
-  // Close attach menu when clicking outside
-  useEffect(() => {
-    function handleClickOutside(e) {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
-        setAttachMenuOpen(false);
-      }
-    }
-    if (attachMenuOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [attachMenuOpen]);
+
 
   const handleInput = (e) => {
     onChange(e.target.value);
@@ -185,7 +174,11 @@ export default function InputBar({
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
+      if (e.nativeEvent && e.nativeEvent.isComposing) {
+        return;
+      }
       e.preventDefault();
+      e.stopPropagation();
       submit();
     }
   };
@@ -291,52 +284,27 @@ export default function InputBar({
       stopListening();
     }
 
+    const textToSend = value.trim();
+
+    // Immediately clear textarea DOM value, height, and speech state so user bar is instantly emptied
+    if (textareaRef.current) {
+      textareaRef.current.value = "";
+      textareaRef.current.style.height = "auto";
+    }
+    baseTextRef.current = "";
+    onChange("");
+
     onSend({
-      text: value.trim(),
+      text: textToSend,
       attachments: [...attachments],
-      webSearch: webSearchActive,
     });
 
     setAttachments([]);
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
 
   return (
     <div className="input-bar">
       <div className="input-bar-inner">
-        {/* Attachment menu popup */}
-        {attachMenuOpen && (
-          <div className="attach-popup-menu" ref={menuRef}>
-            <button className="attach-menu-item" onClick={handleFileClick}>
-              <div className="attach-item-icon">
-                <PaperclipIcon />
-              </div>
-              <div className="attach-item-texts">
-                <span className="attach-item-title">Add photos & files</span>
-                <span className="attach-item-sub">Upload PDF, Word, Vision & Docs</span>
-              </div>
-            </button>
-            <button
-              className="attach-menu-item"
-              onClick={() => {
-                setAttachMenuOpen(false);
-                onChange("Generate an image of ");
-                if (textareaRef.current) {
-                  textareaRef.current.focus();
-                }
-              }}
-            >
-              <div className="attach-item-icon">
-                <PaletteIcon />
-              </div>
-              <div className="attach-item-texts">
-                <span className="attach-item-title">Create AI image</span>
-                <span className="attach-item-sub">Generate images from description</span>
-              </div>
-            </button>
-          </div>
-        )}
-
         <input
           ref={fileInputRef}
           type="file"
@@ -349,8 +317,8 @@ export default function InputBar({
         {/* Attachment button on left */}
         <button
           type="button"
-          className={`attach-btn ${attachMenuOpen ? "active" : ""}`}
-          onClick={() => setAttachMenuOpen(!attachMenuOpen)}
+          className="attach-btn"
+          onClick={handleFileClick}
           aria-label="Add attachments"
           title="Add photos & files"
         >
@@ -418,22 +386,6 @@ export default function InputBar({
           />
         </div>
 
-        {/* Real-time Web Search Toggle */}
-        <button
-          type="button"
-          className={`web-search-toggle-btn ${webSearchActive ? "active" : ""}`}
-          onClick={() => setWebSearchActive(!webSearchActive)}
-          aria-label={webSearchActive ? "Web Search: Enabled" : "Web Search: Disabled"}
-          title={
-            webSearchActive
-              ? "Web Search: ON (Real-time live internet answers for every question)"
-              : "Web Search: OFF (Pure LLM model)"
-          }
-        >
-          <GlobeIcon />
-          <span className="web-search-label">{webSearchActive ? "Search" : "Off"}</span>
-        </button>
-
         {/* Voice-to-text Microphone Button */}
         <button
           type="button"
@@ -445,32 +397,17 @@ export default function InputBar({
           {isListening ? <MicOffIcon /> : <MicIcon />}
         </button>
 
-
-        {/* Dynamic Action Button: Voice icon when empty, Send icon when typing */}
-        {((value && value.trim()) || attachments.length > 0) ? (
-          <button
-            type="button"
-            className="send-btn"
-            disabled={disabled}
-            onClick={submit}
-            aria-label="Send message"
-            title="Send message"
-          >
-            <SendIcon />
-          </button>
-        ) : (
-          onOpenVoiceMode && (
-            <button
-              type="button"
-              className="input-voice-mode-btn"
-              onClick={onOpenVoiceMode}
-              aria-label="Start Voice Mode"
-              title="Start live voice conversation (Voice Agent)"
-            >
-              <VoiceWaveIcon />
-            </button>
-          )
-        )}
+        {/* Send Button */}
+        <button
+          type="button"
+          className="send-btn"
+          disabled={disabled || (!value.trim() && attachments.length === 0)}
+          onClick={submit}
+          aria-label="Send message"
+          title="Send message"
+        >
+          <SendIcon />
+        </button>
       </div>
       <p className="disclaimer">TharikAI can make mistakes. Check important info.</p>
     </div>
@@ -535,52 +472,9 @@ function SendIcon() {
   );
 }
 
-function VoiceWaveIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-    >
-      <rect x="4" y="8" width="2.4" height="8" rx="1.2" />
-      <rect x="9" y="3" width="2.4" height="18" rx="1.2" />
-      <rect x="14" y="6" width="2.4" height="12" rx="1.2" />
-      <rect x="19" y="9" width="2.4" height="6" rx="1.2" />
-    </svg>
-  );
-}
 
-function PaletteIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
-      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
-      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
-      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
-      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
-    </svg>
-  );
-}
 
-function GlobeIcon() {
-  return (
-    <svg
-      width="15"
-      height="15"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <line x1="2" y1="12" x2="22" y2="12" />
-      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-    </svg>
-  );
-}
+
 
 
 

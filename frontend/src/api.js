@@ -1,16 +1,17 @@
 const RAW_URL = import.meta.env.VITE_API_URL;
-const BASE_URL = (RAW_URL ? RAW_URL.trim().replace(/\/+$/, "") : "") || "https://tharikai-gpt.onrender.com";
+// When VITE_API_URL is empty or not provided, default to "" (relative URL) so frontend works
+// seamlessly with both FastAPI same-origin serving (port 8000) and Vite dev server proxy (port 5173).
+const BASE_URL = RAW_URL ? RAW_URL.trim().replace(/\/+$/, "") : "";
 
 /**
  * Streams an assistant reply for the given message history via SSE.
  * `messages` is the full conversation so far: [{role, content}, ...].
- * The server is stateless -- it doesn't store anything, it just relays
- * to the LLM and streams tokens back.
+ * The server relays to the LLM and streams tokens back.
  */
 export async function streamChat(
   messages,
-  { onDelta, onDone, onError, onSources, onStatus },
-  { webSearch = true, deepResearch = false, email = null, model = null, provider = null } = {}
+  { onDelta, onDone, onError },
+  { email = null } = {}
 ) {
   let res;
   try {
@@ -19,11 +20,7 @@ export async function streamChat(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages,
-        web_search: !!webSearch,
-        deep_research: !!deepResearch,
         email: email || undefined,
-        model: model || undefined,
-        provider: provider || undefined,
       }),
     });
   } catch {
@@ -56,10 +53,6 @@ export async function streamChat(
         const parsed = JSON.parse(payload);
         if (parsed.error) {
           onError(parsed.error);
-        } else if (parsed.type === "sources" && parsed.sources) {
-          if (onSources) onSources(parsed.sources);
-        } else if (parsed.type === "search_status") {
-          if (onStatus) onStatus(parsed.status);
         } else if (parsed.delta) {
           if (onDelta) onDelta(parsed.delta);
         } else if (parsed.done) {
@@ -71,20 +64,6 @@ export async function streamChat(
     }
   }
 }
-
-export async function searchWeb(query, maxResults = 5) {
-  const res = await fetch(`${BASE_URL}/api/search`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, max_results: maxResults }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.detail || "Search failed.");
-  }
-  return data;
-}
-
 
 export async function registerUser(email, name, password_hash) {
   const res = await fetch(`${BASE_URL}/api/auth/register`, {
@@ -210,7 +189,7 @@ export async function generateImageRemote(prompt) {
     } else if (res.status === 429) {
       throw new Error(`Rate limit exceeded (429): ${errorDetail || "Too many requests. Please wait a moment."}`);
     } else if (res.status >= 500) {
-      throw new Error(`Cloudflare Image API error (${res.status}): ${errorDetail || "Internal server error."}`);
+      throw new Error(`GPT Image 2.5 API error (${res.status}): ${errorDetail || "Internal server error."}`);
     } else {
       throw new Error(`Image generation failed (${res.status}): ${errorDetail || res.statusText}`);
     }
@@ -222,80 +201,52 @@ export async function generateImageRemote(prompt) {
     throw new Error(`Expected image binary response but received '${contentType}': ${textSample.slice(0, 120)}`);
   }
 
-  // Read response as RAW PNG binary Blob (DO NOT call res.json())
   const blob = await res.blob();
   const objectUrl = URL.createObjectURL(blob);
   return { objectUrl, blob, prompt: cleanPrompt };
 }
 
-export async function runDeepResearchRemote(query) {
-  const res = await fetch(`${BASE_URL}/api/research`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.detail || "Deep research failed.");
-  }
-  return data;
-}
-
-export async function requestVoiceSession({ email, name, roomName, identity } = {}) {
-  const res = await fetch(`${BASE_URL}/api/voice/session`, {
+/**
+ * Generates an executive document using Carbone.io API via backend.
+ * @param {Object} params
+ * @param {string} [params.title]
+ * @param {string} [params.content]
+ * @param {string} [params.query]
+ * @param {boolean} [params.useSearch]
+ * @returns {Promise<{ renderId: string, title: string, filename: string, downloadUrl: string, viewUrl: string }>}
+ */
+export async function generateCarboneDocument({ title, content, query, useSearch = false }) {
+  const res = await fetch(`${BASE_URL}/api/documents/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      email: email || undefined,
-      name: name || undefined,
-      room_name: roomName || undefined,
-      identity: identity || undefined,
+      title,
+      content,
+      query,
+      use_search: useSearch,
     }),
   });
 
-  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.detail || data.error || `Voice session failed with status ${res.status}`);
+    const errJson = await res.json().catch(() => ({}));
+    const msg = errJson.detail || errJson.error || res.statusText || "Failed to generate document";
+    throw new Error(msg);
   }
-  return data;
+
+  return await res.json();
 }
 
-export async function checkVoiceStatus() {
-  try {
-    const res = await fetch(`${BASE_URL}/api/voice/status`);
-    if (!res.ok) return { configured: false };
-    return await res.json();
-  } catch {
-    return { configured: false };
-  }
+/**
+ * Returns the download URL for a rendered document.
+ */
+export function getDocumentDownloadUrl(renderId, filename = "document.pdf") {
+  return `${BASE_URL}/api/documents/download/${renderId}?filename=${encodeURIComponent(filename)}`;
 }
 
-export async function getAvailableModels() {
-  try {
-    const res = await fetch(`${BASE_URL}/api/models`);
-    if (!res.ok) throw new Error("Failed to fetch models");
-    return await res.json();
-  } catch {
-    return {
-      models: [
-        {
-          id: "openrouter/auto",
-          name: "Ask AI Efficient",
-          provider: "openrouter",
-          badge: "Efficient",
-          description: "Ultra-fast & smart, cost-efficient AI powered by OpenRouter",
-          isDefault: true,
-        },
-        {
-          id: "gemini-3.6-flash",
-          name: "TharikAI Pro (Gemini)",
-          provider: "gemini",
-          badge: "Pro",
-          description: "Google Gemini 3.6 Flash with deep multimodal vision & reasoning",
-          isDefault: false,
-        },
-      ],
-      default_model: "openrouter/auto",
-    };
-  }
+/**
+ * Returns the inline preview URL for a rendered document.
+ */
+export function getDocumentViewUrl(renderId, filename = "document.pdf") {
+  return `${BASE_URL}/api/documents/view/${renderId}?filename=${encodeURIComponent(filename)}`;
 }
+

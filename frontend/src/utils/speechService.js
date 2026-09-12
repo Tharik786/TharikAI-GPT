@@ -354,7 +354,7 @@ export function stopSpeech() {
 
   try {
     window.speechSynthesis.cancel();
-  } catch {}
+  } catch { }
 
   currentUtterances = [];
   currentMessageId = null;
@@ -372,7 +372,7 @@ export function pauseSpeech() {
     window.speechSynthesis.pause();
     isPaused = true;
     notifyListeners();
-  } catch {}
+  } catch { }
 }
 
 /**
@@ -384,7 +384,7 @@ export function resumeSpeech() {
     window.speechSynthesis.resume();
     isPaused = false;
     notifyListeners();
-  } catch {}
+  } catch { }
 }
 
 /**
@@ -457,7 +457,7 @@ export function speakMessage(messageId, text, options = {}) {
     if (voice) {
       utterance.voice = voice;
     }
-    
+
     // Smooth, clear rate
     utterance.rate = rate;
     utterance.pitch = 1.0;

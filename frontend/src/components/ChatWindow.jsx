@@ -147,9 +147,6 @@ export default function ChatWindow({
           role={m.role}
           content={m.content}
           attachments={m.attachments}
-          sources={m.sources}
-          searchStatus={m.searchStatus}
-          webSearch={m.webSearch}
           isStreaming={m.id === streamingId}
           user={user}
           isSpeaking={m.id === speakingMessageId}

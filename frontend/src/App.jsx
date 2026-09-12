@@ -4,7 +4,6 @@ import Header from "./components/Header.jsx";
 import ChatWindow from "./components/ChatWindow.jsx";
 import InputBar from "./components/InputBar.jsx";
 import AuthModal from "./components/AuthModal.jsx";
-import VoiceModeModal from "./components/VoiceModeModal.jsx";
 import {
   streamChat,
   fetchRemoteConversations,
@@ -33,17 +32,6 @@ export default function App() {
   const [error, setError] = useState(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login");
-  const [voiceModeOpen, setVoiceModeOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(() => {
-    return localStorage.getItem("tharikai_selected_model") || "openrouter/auto";
-  });
-
-  const handleSelectModel = (modelId) => {
-    setSelectedModel(modelId);
-    try {
-      localStorage.setItem("tharikai_selected_model", modelId);
-    } catch {}
-  };
 
   // Text-To-Speech state
   const [speechState, setSpeechState] = useState({
@@ -70,7 +58,6 @@ export default function App() {
     syncConversations(activeUser);
   }, []);
 
-
   const syncConversations = async (currentUser) => {
     let list = storage.list();
     setConversations(list);
@@ -79,74 +66,69 @@ export default function App() {
       try {
         const remote = await fetchRemoteConversations(currentUser.email);
         if (remote && remote.length > 0) {
-          storage.writeAll(remote);
-          setConversations(remote);
-        } else if (list.length > 0) {
-          for (const c of list) {
-            await syncConversationRemote(c, currentUser.email);
-            if (c.messages?.length > 0) {
-              await syncMessagesRemote(c.id, c.messages, c.updatedAt);
-            }
-          }
+          const merged = storage.mergeRemote(remote);
+          setConversations(merged);
         }
-      } catch (err) {
-        console.warn("Supabase conversation sync note:", err);
+      } catch (e) {
+        console.warn("Could not sync remote conversations:", e);
       }
     }
-  };
-
-  const openConversation = (id) => {
-    stopSpeech();
-    const conv = storage.get(id);
-    setActiveId(id);
-    setMessages(conv ? conv.messages : []);
-    setSidebarOpen(false);
   };
 
   const handleNewChat = () => {
     stopSpeech();
     setActiveId(null);
     setMessages([]);
-    setSidebarOpen(false);
+    setError(null);
+    setDraft("");
+  };
+
+  const openConversation = (id) => {
+    stopSpeech();
+    setActiveId(id);
+    const conv = storage.get(id);
+    setMessages(conv ? conv.messages || [] : []);
+    setError(null);
+    setDraft("");
   };
 
   const ensureConversation = () => {
-    if (activeId) return activeId;
-    const conv = storage.create();
-    setConversations(storage.list());
-    setActiveId(conv.id);
-    if (user?.email) {
-      syncConversationRemote(conv, user.email);
+    let convId = activeId;
+    if (!convId) {
+      const newConv = storage.create();
+      convId = newConv.id;
+      setActiveId(convId);
+      setConversations(storage.list());
+      if (user?.email) {
+        syncConversationRemote(newConv, user.email);
+      }
     }
-    return conv.id;
+    return convId;
   };
 
   const send = async (payload) => {
-    setError(null);
+    const text = typeof payload === "string" ? payload : payload?.text;
+    const attachments = typeof payload === "string" ? [] : (payload?.attachments || []);
+
+    if (!text && attachments.length === 0) return;
+    if (streamingId) return;
+
+    // Immediately clear the input bar draft text so the bar resets
     setDraft("");
+
+    stopSpeech();
+    setError(null);
     const convId = ensureConversation();
 
-    const text = typeof payload === "string" ? payload : payload?.text || "";
-    const attachments = typeof payload === "object" && Array.isArray(payload?.attachments) ? payload.attachments : [];
-    const webSearch = typeof payload === "object" && payload?.webSearch !== undefined ? payload.webSearch : true;
-
-    const deepResearch = typeof payload === "object" && payload?.deepResearch !== undefined ? payload.deepResearch : false;
-
-    // Extract any image attachments for multimodal vision
     const imageAttachments = attachments.filter((a) => a.isImage && a.dataUrl);
 
     const userMsg = {
       id: `local-${Date.now()}`,
       role: "user",
       content: text,
-      webSearch,
-      deepResearch,
-      images: imageAttachments.map((a) => ({
-        dataUrl: a.dataUrl,
-        mimeType: a.type || "image/jpeg",
-        name: a.name,
-      })),
+      images: imageAttachments.map((a) => a.dataUrl),
       attachments: attachments.map((a) => ({
+        id: a.id,
         name: a.name,
         size: a.size,
         type: a.type,
@@ -160,8 +142,6 @@ export default function App() {
       id: `stream-${Date.now()}`,
       role: "assistant",
       content: "",
-      sources: [],
-      searchStatus: "",
     };
 
     let working = [...messages, userMsg, assistantMsg];
@@ -225,21 +205,8 @@ export default function App() {
     await streamChat(
       historyForLLM,
       {
-        onStatus: (status) => {
-          working = working.map((m) =>
-            m.id === assistantMsg.id ? { ...m, searchStatus: status } : m
-          );
-          setMessages(working);
-        },
-        onSources: (sources) => {
-          working = working.map((m) =>
-            m.id === assistantMsg.id ? { ...m, sources, searchStatus: "" } : m
-          );
-          setMessages(working);
-        },
         onDelta: (delta) => {
           pendingDeltas += delta;
-          // Immediately flush the first token so the AI responds with 0ms visual delay
           const currentAssistantMsg = working.find((m) => m.id === assistantMsg.id);
           if (!currentAssistantMsg || !currentAssistantMsg.content) {
             flushDeltas();
@@ -259,7 +226,6 @@ export default function App() {
           }
           flushDeltas();
           setStreamingId(null);
-          // Persist the finished exchange
           storage.setMessages(convId, working);
           setConversations(storage.list());
           if (user?.email) {
@@ -278,7 +244,6 @@ export default function App() {
           flushDeltas();
           setError(msg);
           setStreamingId(null);
-          // Still persist whatever was said
           storage.setMessages(convId, working);
           setConversations(storage.list());
           if (user?.email) {
@@ -291,16 +256,10 @@ export default function App() {
         },
       },
       {
-        webSearch,
-        deepResearch,
         email: user?.email,
-        model: selectedModel,
-        provider: selectedModel.includes("gemini") ? "gemini" : "openrouter",
       }
     );
   };
-
-
 
   const handleRename = (id, title) => {
     storage.rename(id, title);
@@ -336,7 +295,6 @@ export default function App() {
     stopSpeech();
     authStorage.logout();
     setUser(null);
-    // Load guest conversations
     const guestConvs = storage.list();
     setConversations(guestConvs);
     setActiveId(null);
@@ -358,87 +316,6 @@ export default function App() {
     setSpeechRate(nextSpeed);
   };
 
-  const handleVoiceMessageSend = async (voiceText, { onDelta, onDone, onError }) => {
-    setError(null);
-    const convId = ensureConversation();
-
-    const userMsg = {
-      id: `local-${Date.now()}`,
-      role: "user",
-      content: voiceText,
-      webSearch: true,
-      attachments: [],
-    };
-    const assistantMsg = {
-      id: `stream-${Date.now()}`,
-      role: "assistant",
-      content: "",
-      sources: [],
-      searchStatus: "",
-    };
-
-    let working = [...messages, userMsg, assistantMsg];
-    setMessages(working);
-    setStreamingId(assistantMsg.id);
-
-    const conv = storage.get(convId);
-    if (conv && conv.title === "New chat") {
-      const title = voiceText.slice(0, 48) + (voiceText.length > 48 ? "..." : "");
-      storage.rename(convId, title);
-    }
-
-    const historyForLLM = [...messages, { role: "user", content: voiceText }].map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    await streamChat(
-      historyForLLM,
-      {
-        onStatus: (status) => {
-          working = working.map((m) =>
-            m.id === assistantMsg.id ? { ...m, searchStatus: status } : m
-          );
-          setMessages(working);
-        },
-        onSources: (sources) => {
-          working = working.map((m) =>
-            m.id === assistantMsg.id ? { ...m, sources, searchStatus: "" } : m
-          );
-          setMessages(working);
-        },
-        onDelta: (delta) => {
-          working = working.map((m) =>
-            m.id === assistantMsg.id ? { ...m, content: m.content + delta } : m
-          );
-          setMessages(working);
-          if (onDelta) onDelta(delta);
-        },
-        onDone: () => {
-          setStreamingId(null);
-          storage.setMessages(convId, working);
-          setConversations(storage.list());
-          if (user?.email) {
-            const updatedConv = storage.get(convId);
-            if (updatedConv) {
-              syncConversationRemote(updatedConv, user.email);
-              syncMessagesRemote(convId, working, updatedConv.updatedAt);
-            }
-          }
-          if (onDone) onDone();
-        },
-        onError: (msg) => {
-          setError(msg);
-          setStreamingId(null);
-          storage.setMessages(convId, working);
-          setConversations(storage.list());
-          if (onError) onError(msg);
-        },
-      },
-      { webSearch: true }
-    );
-  };
-
   const handleRetry = async (assistantMessageId) => {
     if (streamingId) return;
     stopSpeech();
@@ -453,8 +330,6 @@ export default function App() {
       id: `stream-${Date.now()}`,
       role: "assistant",
       content: "",
-      sources: [],
-      searchStatus: "",
     };
 
     let working = [...historyUpToAssistant, newAssistantMsg];
@@ -490,18 +365,6 @@ export default function App() {
     await streamChat(
       historyForLLM,
       {
-        onStatus: (status) => {
-          working = working.map((m) =>
-            m.id === newAssistantMsg.id ? { ...m, searchStatus: status } : m
-          );
-          setMessages(working);
-        },
-        onSources: (sources) => {
-          working = working.map((m) =>
-            m.id === newAssistantMsg.id ? { ...m, sources, searchStatus: "" } : m
-          );
-          setMessages(working);
-        },
         onDelta: (delta) => {
           pendingDeltas += delta;
           const currentAssistantMsg = working.find((m) => m.id === newAssistantMsg.id);
@@ -546,9 +409,7 @@ export default function App() {
         },
       },
       {
-        webSearch: true,
-        model: selectedModel,
-        provider: selectedModel.includes("gemini") ? "gemini" : "openrouter",
+        email: user?.email,
       }
     );
   };
@@ -589,9 +450,6 @@ export default function App() {
           }}
           onLogout={handleLogout}
           onToggleSidebar={() => setSidebarOpen(true)}
-          onOpenVoiceMode={() => setVoiceModeOpen(true)}
-          selectedModel={selectedModel}
-          onSelectModel={handleSelectModel}
         />
 
         {error && <div className="error-banner">{error}</div>}
@@ -674,7 +532,6 @@ export default function App() {
           onChange={setDraft}
           onSend={send}
           disabled={!!streamingId}
-          onOpenVoiceMode={() => setVoiceModeOpen(true)}
         />
       </main>
 
@@ -684,16 +541,6 @@ export default function App() {
         onClose={() => setAuthModalOpen(false)}
         onAuthSuccess={handleAuthSuccess}
       />
-
-      <VoiceModeModal
-        isOpen={voiceModeOpen}
-        onClose={() => setVoiceModeOpen(false)}
-        onSendMessage={handleVoiceMessageSend}
-        activeConversationTitle={storage.get(activeId)?.title || "Live Voice"}
-        user={user}
-      />
     </div>
   );
 }
-
-

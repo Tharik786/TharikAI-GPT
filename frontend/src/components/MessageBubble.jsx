@@ -131,8 +131,8 @@ const DocumentAttachmentCard = React.memo(function DocumentAttachmentCard({ atta
   const badgeLabel = isPdf
     ? "PDF Document"
     : isWord
-    ? "Word Document"
-    : "Text Document";
+      ? "Word Document"
+      : "Text Document";
 
   const pagesInfo = attachment.pageCount
     ? ` • ${attachment.pageCount} ${attachment.pageCount === 1 ? "page" : "pages"}`
@@ -268,7 +268,7 @@ const CodeBlock = React.memo(function CodeBlock({ inline, className, children, .
         logs.push("🐍 Executing Python calculations & data analysis:");
         const lines = codeText.split("\n");
         const context = {};
-        
+
         for (const rawLine of lines) {
           const line = rawLine.trim();
           if (!line || line.startsWith("#")) continue;
@@ -306,7 +306,7 @@ const CodeBlock = React.memo(function CodeBlock({ inline, className, children, .
             try {
               const evalFn = new Function(...Object.keys(context), `return (${valExpr});`);
               context[name] = evalFn(...Object.values(context));
-            } catch {}
+            } catch { }
           }
         }
 
@@ -374,7 +374,7 @@ const CodeBlock = React.memo(function CodeBlock({ inline, className, children, .
           </button>
         </div>
       </div>
-      
+
       <SyntaxHighlighter
         language={lang}
         style={oneDark}
@@ -582,7 +582,7 @@ const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ..
   return (
     <div className="generated-image-card">
       <div
-        className="generated-image-container"
+        className={`generated-image-container ${isWorking ? "is-loading" : "is-ready"}`}
         onClick={() => {
           if (imageSrc && !isWorking && !error) {
             setModalOpen(true);
@@ -686,15 +686,6 @@ const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ..
         )}
       </div>
 
-      {promptText && (
-        <div className="generated-image-caption">
-          <span className="image-prompt-badge">AI Image</span>
-          <span className="image-prompt-text" title={promptText}>
-            {promptText}
-          </span>
-        </div>
-      )}
-
       {/* Full screen Lightbox preview modal */}
       {modalOpen && imageSrc && (
         <div className="image-lightbox-overlay" onClick={() => setModalOpen(false)}>
@@ -742,10 +733,38 @@ const TableWrapper = ({ children, ...props }) => {
   );
 };
 
+const MarkdownLink = ({ href, children, ...props }) => {
+  const text = typeof children === "string" ? children : (Array.isArray(children) ? children.join("") : "");
+  const isDoc = (href && href.includes("/api/documents/")) || text.startsWith("document:");
+
+  if (isDoc) {
+    const cleanText = text.replace(/^document:\s*/i, "").trim() || "Download PDF Document";
+    const downloadUrl = (href || "").replace("/api/documents/view/", "/api/documents/download/");
+    return (
+      <a
+        href={downloadUrl}
+        download
+        className="clean-doc-link"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {cleanText.startsWith("📄") || cleanText.startsWith("📥") ? cleanText : `📄 ${cleanText}`}
+      </a>
+    );
+  }
+
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+      {children}
+    </a>
+  );
+};
+
 const MARKDOWN_COMPONENTS = {
   code: CodeBlock,
   table: TableWrapper,
   img: GeneratedImageCard,
+  a: MarkdownLink,
 };
 
 function MessageBubble({
@@ -772,7 +791,10 @@ function MessageBubble({
   // For assistant messages, skip expensive document parsing regexes during streaming
   const { cleanText, attachments } = useMemo(() => {
     if (!isUser) {
-      return { cleanText: content || "", attachments: [] };
+      let text = content || "";
+      // Strip any "Here is your generated image of...:" intro line
+      text = text.replace(/^Here is your generated image of(?:\s+\*\*[^*]+\*\*|\s+[^:\n]+)?:\s*/i, "").trim();
+      return { cleanText: text, attachments: [] };
     }
     return parseMessageContent(content, propAttachments);
   }, [isUser, content, propAttachments]);
@@ -794,9 +816,8 @@ function MessageBubble({
 
   return (
     <div
-      className={`message-row ${isUser ? "message-row-user" : "message-row-assistant"} ${
-        isSpeaking ? "is-message-speaking" : ""
-      }`}
+      className={`message-row ${isUser ? "message-row-user" : "message-row-assistant"} ${isSpeaking ? "is-message-speaking" : ""
+        }`}
     >
       <div className={`avatar ${isUser ? "avatar-user" : "avatar-assistant"}`}>
         {isUser ? (
@@ -806,9 +827,8 @@ function MessageBubble({
         )}
       </div>
       <div
-        className={`message-bubble ${isUser ? "bubble-user" : "bubble-assistant"} ${
-          isStreaming ? "is-streaming" : ""
-        } ${isSpeaking ? "bubble-speaking" : ""}`}
+        className={`message-bubble ${isUser ? "bubble-user" : "bubble-assistant"} ${isStreaming ? "is-streaming" : ""
+          } ${isSpeaking ? "bubble-speaking" : ""}`}
       >
 
 

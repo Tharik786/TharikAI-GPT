@@ -40,6 +40,10 @@ def get_system_prompt() -> str:
         f"   - When live web search results are provided in your context, always ground your response in the real-time internet results.\n"
         f"   - Report current news, factual updates, and real-world information accurately as verified by authoritative web sources.\n"
         f"   - Cite sources naturally using markdown links e.g. [Source Title](URL) or [1], [2].\n\n"
+        f"5. AI DOCUMENT & PDF GENERATION (POWERED BY CARBONE.IO):\n"
+        f"   - TharikAI HAS full capability to generate, render, and provide downloadable PDF executive documents and reports via integrated Carbone.io!\n"
+        f"   - NEVER claim that you cannot create or send downloadable PDF files.\n"
+        f"   - When asked to write or create a document/report/PDF, provide a comprehensive, executive-level structured report with clear sections, bullet points, and tables.\n\n"
         f"Tone: Natural, warm, polite, culturally appropriate, and concise.\n"
     )
 
@@ -310,8 +314,6 @@ async def stream_chat_completion(
     Automatically routes based on provider/model selection, key format, or env vars.
     Supports Multimodal Vision and Web Search grounding.
     """
-    hf_token = os.getenv("HF_TOKEN", os.getenv("HUGGINGFACE_API_KEY", "")).strip()
-    hf_chat_model = os.getenv("HF_CHAT_MODEL", "").strip()
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     generic_key = os.getenv("AI_API_KEY", "").strip()
@@ -342,16 +344,7 @@ async def stream_chat_completion(
         elif not openrouter_key:
             raise GeminiError("Gemini API key is not configured. Please add GEMINI_API_KEY in backend .env.")
 
-    # 3. Hugging Face Chat Model (e.g. SHSLab/Kimi-K3-Abliterated)
-    if hf_token and hf_chat_model and req_provider in ("hf", "huggingface"):
-        try:
-            async for chunk in _stream_huggingface_chat(hf_token, hf_chat_model, messages, system_prompt=system_prompt):
-                yield chunk
-            return
-        except Exception as hf_err:
-            print(f"Hugging Face chat stream fallback note: {hf_err}")
-
-    # 4. OpenRouter provider (default efficient provider)
+    # 3. OpenRouter provider (default efficient provider)
     if openrouter_key and req_provider != "gemini":
         async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt, model=req_model or None):
             yield chunk
