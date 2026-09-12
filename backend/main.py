@@ -664,7 +664,11 @@ async def chat(body: ChatBody):
             yield f"data: {json.dumps({'delta': img_markdown})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
 
-        return StreamingResponse(image_event_stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            image_event_stream(),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache", "Connection": "keep-alive"}
+        )
 
     # Detect if user query is requesting document generation
     doc_topic = detect_document_prompt(latest_user_text)
@@ -702,7 +706,8 @@ async def chat(body: ChatBody):
 
             try:
                 yield f"data: {json.dumps({'type': 'search_status', 'status': f'📄 Rendering PDF document...'})}\n\n"
-                render_res = render_carbone_document(title=doc_title, markdown_content=doc_content)
+                import asyncio
+                render_res = await asyncio.to_thread(render_carbone_document, title=doc_title, markdown_content=doc_content)
                 render_id = render_res["renderId"]
                 filename = render_res["filename"]
                 encoded_fn = urllib.parse.quote(filename)
@@ -716,7 +721,11 @@ async def chat(body: ChatBody):
 
             yield f"data: {json.dumps({'done': True})}\n\n"
 
-        return StreamingResponse(doc_event_stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            doc_event_stream(),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache", "Connection": "keep-alive"}
+        )
 
     search_context = ""
     if should_perform_web_search(latest_user_text):
@@ -731,7 +740,11 @@ async def chat(body: ChatBody):
             return
         yield f"data: {json.dumps({'done': True})}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache", "Connection": "keep-alive"}
+    )
 
 
 # ============================================================

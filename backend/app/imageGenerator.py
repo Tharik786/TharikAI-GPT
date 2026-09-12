@@ -213,10 +213,11 @@ async def create_kie_image_task(
             )
 
         data = response.json()
+        data_block = data.get("data") or {}
         task_id = (
-            data.get("data", {}).get("taskId")
+            data_block.get("taskId")
             or data.get("taskId")
-            or data.get("data", {}).get("recordId")
+            or data_block.get("recordId")
             or data.get("recordId")
         )
 
