@@ -694,24 +694,22 @@ async def chat(body: ChatBody):
             try:
                 async for chunk in stream_chat_completion(llm_messages_doc, web_search_context=search_ctx):
                     full_chunks.append(chunk)
+                    yield f"data: {json.dumps({'delta': chunk})}\n\n"
                 doc_content = strip_template_metadata("".join(full_chunks))
             except Exception as e:
                 yield f"data: {json.dumps({'error': f'Failed to generate document content: {str(e)}'})}\n\n"
                 return
 
             try:
+                yield f"data: {json.dumps({'type': 'search_status', 'status': f'📄 Rendering PDF document...'})}\n\n"
                 render_res = render_carbone_document(title=doc_title, markdown_content=doc_content)
                 render_id = render_res["renderId"]
                 filename = render_res["filename"]
                 encoded_fn = urllib.parse.quote(filename)
 
-                # Stream clean download link
-                doc_link = f"[📄 Download {doc_title}.pdf](/api/documents/download/{render_id}?filename={encoded_fn})\n\n"
+                # Stream clean download link at the end of the text
+                doc_link = f"\n\n[📄 Download {doc_title}.pdf](/api/documents/download/{render_id}?filename={encoded_fn})\n\n"
                 yield f"data: {json.dumps({'delta': doc_link})}\n\n"
-
-                # Stream the written report text directly in chat
-                for word in doc_content.split(" "):
-                    yield f"data: {json.dumps({'delta': word + ' '})}\n\n"
             except Exception as e:
                 yield f"data: {json.dumps({'error': f'Carbone document generation error: {str(e)}'})}\n\n"
                 return
