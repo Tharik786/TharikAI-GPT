@@ -5,7 +5,7 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "https://tharik-ai-gpt-backend.onrender.com/api/:splat"
+  to = "https://tharikai-gpt.onrender.com/api/:splat"
   status = 200
   force = true
 
