@@ -51,12 +51,13 @@ from app.webService import should_perform_web_search, perform_web_search
 from app.imageGenerator import (
     detect_image_prompt,
     generate_image_bytes,
-    generate_kie_image,
+    generate_ai_image,
 )
 from app.docGenerator import (
     render_carbone_document,
     fetch_rendered_file,
     detect_document_prompt,
+    clean_document_topic_and_format,
     strip_template_metadata,
 )
 from app.db import (
@@ -217,12 +218,18 @@ async def render_frontend_or_spa(full_path: str, request: Request):
         if clean_path:
             requested_file = (dist_root / clean_path).resolve()
             if str(requested_file).startswith(str(dist_root.resolve())) and requested_file.is_file():
-                return FileResponse(requested_file)
+                headers = {}
+                if clean_path.endswith(".html") or clean_path in ("sw.js", "registerSW.js", "manifest.webmanifest"):
+                    headers = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+                return FileResponse(requested_file, headers=headers)
 
         # SPA fallback rewrite: return dist/index.html for root or client-side routes
         index_file = dist_root / "index.html"
         if index_file.is_file():
-            return FileResponse(index_file)
+            return FileResponse(
+                index_file,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+            )
 
     # 2. Second priority: If dist is not yet built, proxy to Vite dev server on port 5173
     if is_vite_dev_server_running():
@@ -313,7 +320,7 @@ class ImageBody(BaseModel):
 @app.post("/api/image")
 async def image_endpoint(body: ImageBody):
     """
-    Direct AI image generation endpoint proxying to GPT Image 2.5 Flare (Kie.ai).
+    Direct AI image generation endpoint using FLUX.1 (with SDXL Turbo fallback).
     Returns RAW image binary bytes (PNG/JPEG) for frontend <img> and Blob display.
     """
     if not body.prompt or not body.prompt.strip():
@@ -375,7 +382,7 @@ async def generate_image_json_endpoint(body: ImageBody):
     if not body.prompt or not body.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
-    return await generate_kie_image(
+    return await generate_ai_image(
         prompt=body.prompt.strip(),
         aspect_ratio=body.aspect_ratio or "auto",
         resolution=body.resolution or "1K",
@@ -658,7 +665,7 @@ async def chat(body: ChatBody):
     image_prompt = detect_image_prompt(latest_user_text)
     if image_prompt:
         async def image_event_stream():
-            yield f"data: {json.dumps({'type': 'search_status', 'status': f'🎨 Creating image with GPT Image 2.5 Flare for \"{image_prompt[:45]}\"...'})}\n\n"
+            yield f"data: {json.dumps({'type': 'search_status', 'status': f'🎨 Creating high-definition image with FLUX.1 for \"{image_prompt[:45]}\"...'})}\n\n"
             encoded_prompt = urllib.parse.quote(image_prompt)
             img_markdown = f"![{image_prompt}](/api/image?prompt={encoded_prompt})\n\n"
             yield f"data: {json.dumps({'delta': img_markdown})}\n\n"
@@ -670,27 +677,66 @@ async def chat(body: ChatBody):
             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache", "Connection": "keep-alive"}
         )
 
-    # Detect if user query is requesting document generation
-    doc_topic = detect_document_prompt(latest_user_text)
-    if doc_topic:
+    # Detect if user query is requesting document, presentation, spreadsheet, or all-format generation
+    doc_topic, doc_format = clean_document_topic_and_format(latest_user_text)
+    if doc_topic and detect_document_prompt(latest_user_text):
+        doc_title = doc_topic.title()
+
         async def doc_event_stream():
-            yield f"data: {json.dumps({'type': 'search_status', 'status': f'📄 Generating document for \"{doc_topic[:45]}\"...'})}\n\n"
+            if doc_format == "ppt":
+                status_msg = f'📽️ Creating PowerPoint Presentation for "{doc_title[:40]}"...'
+                prompt_content = (
+                    f"# {doc_title}\n\n"
+                    f"Create a professional, highly detailed, slide-by-slide PowerPoint presentation on: '{doc_title}'.\n\n"
+                    "Format the output strictly as individual slides using Markdown ## headings:\n\n"
+                    f"## Slide 1: Introduction to {doc_title}\n"
+                    "- Clear overview and relevance\n"
+                    "- Primary concept and significance\n"
+                    "- Core objectives and learning roadmap\n\n"
+                    "## Slide 2: Fundamentals & Architecture\n"
+                    "- Fundamental principle 1 with concise explanation\n"
+                    "- Fundamental principle 2 with practical context\n"
+                    "- Architectural workflow and mechanics\n\n"
+                    "Continue for 6 to 8 detailed slides covering core theory, key components, algorithms/frameworks, real-world industry applications, comparison table, challenges, and future outlook.\n\n"
+                    "In one of the middle slides, include a Markdown Comparison Table (| Feature | Approach A | Approach B |).\n\n"
+                    "CRITICAL: Do NOT output author names, dates, or metadata headers. Do NOT include markdown citation links like [1](url) or bracket citations like [1]. Write clean, professional bullet points only (3 to 5 points per slide). Begin immediately with the first slide."
+                )
+            elif doc_format == "excel":
+                status_msg = f'📊 Creating Excel Spreadsheet dataset for "{doc_title[:40]}"...'
+                prompt_content = (
+                    f"# {doc_title} - Data & Analysis\n\n"
+                    f"Create an exhaustive, structured data table and spreadsheet analysis on: '{doc_title}'.\n\n"
+                    "Provide a comprehensive, multi-column Markdown Table:\n"
+                    "| Item / Feature | Category | Metric / Specification | Value / Status | Analysis / Notes |\n"
+                    "|---|---|---|---|---|\n"
+                    "Include at least 10 to 15 detailed rows of data.\n"
+                    "Follow the table with key statistical insights, formulas, and executive summary.\n\n"
+                    "CRITICAL: Do NOT include citation links like [1](url) inside table cells. Start immediately with the title and table."
+                )
+            else:
+                status_msg = f'📄 Generating comprehensive notes and document for "{doc_title[:40]}"...'
+                prompt_content = (
+                    f"# {doc_title}\n\n"
+                    f"Write an in-depth, comprehensive study guide and executive report on: '{doc_title}'.\n\n"
+                    "Include:\n"
+                    "1. Executive Summary & Core Foundations\n"
+                    "2. In-Depth Technical Concepts (with ## Section Headings)\n"
+                    "3. Comprehensive Comparative Markdown Table (| Component | Description | Advantage |)\n"
+                    "4. Slide-by-Slide Presentation Breakdown (## Slide 1: ..., ## Slide 2: ... with bullet points)\n"
+                    "5. Key Practical Takeaways.\n\n"
+                    "CRITICAL: Do NOT include template metadata headers or citation links like [1](url). Begin directly with the main heading."
+                )
+
+            yield f"data: {json.dumps({'type': 'search_status', 'status': status_msg})}\n\n"
 
             search_ctx = ""
             if should_perform_web_search(doc_topic):
                 search_ctx = await perform_web_search(doc_topic)
 
-            doc_title = doc_topic.title()
             llm_messages_doc = [
                 {
                     "role": "user",
-                    "content": (
-                        f"Write an in-depth, comprehensive, well-structured analysis on: '{doc_topic}'.\n\n"
-                        "Include an Executive Summary, Key Findings, Detailed Sections with relevant data, "
-                        "and Strategic Recommendations. Format in clean markdown with clear headings.\n\n"
-                        "CRITICAL: Do NOT include any template headers, document titles, dates, author names, 'Executive Document:', "
-                        "'Prepared by:', 'Date:', metadata fields, or horizontal lines at the beginning. Start immediately with the first section heading."
-                    ),
+                    "content": prompt_content,
                 }
             ]
 
@@ -701,23 +747,22 @@ async def chat(body: ChatBody):
                     yield f"data: {json.dumps({'delta': chunk})}\n\n"
                 doc_content = strip_template_metadata("".join(full_chunks))
             except Exception as e:
-                yield f"data: {json.dumps({'error': f'Failed to generate document content: {str(e)}'})}\n\n"
+                yield f"data: {json.dumps({'error': f'Failed to generate content: {str(e)}'})}\n\n"
                 return
 
-            try:
-                yield f"data: {json.dumps({'type': 'search_status', 'status': f'📄 Rendering PDF document...'})}\n\n"
-                import asyncio
-                render_res = await asyncio.to_thread(render_carbone_document, title=doc_title, markdown_content=doc_content)
-                render_id = render_res["renderId"]
-                filename = render_res["filename"]
-                encoded_fn = urllib.parse.quote(filename)
-
-                # Stream clean download link at the end of the text
-                doc_link = f"\n\n[📄 Download {doc_title}.pdf](/api/documents/download/{render_id}?filename={encoded_fn})\n\n"
-                yield f"data: {json.dumps({'delta': doc_link})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'error': f'Carbone document generation error: {str(e)}'})}\n\n"
-                return
+            # Only render Carbone PDF if the user specifically asked for PDF or all formats
+            if doc_format in ("pdf", "all"):
+                try:
+                    yield f"data: {json.dumps({'type': 'search_status', 'status': '📑 Rendering PDF document...'})}\n\n"
+                    import asyncio
+                    render_res = await asyncio.to_thread(render_carbone_document, title=doc_title, markdown_content=doc_content)
+                    render_id = render_res["renderId"]
+                    filename = render_res["filename"]
+                    encoded_fn = urllib.parse.quote(filename)
+                    doc_link = f"\n\n[📄 Download {doc_title}.pdf](/api/documents/download/{render_id}?filename={encoded_fn})\n\n"
+                    yield f"data: {json.dumps({'delta': doc_link})}\n\n"
+                except Exception as e:
+                    pass
 
             yield f"data: {json.dumps({'done': True})}\n\n"
 
@@ -737,6 +782,12 @@ async def chat(body: ChatBody):
                 yield f"data: {json.dumps({'delta': chunk})}\n\n"
         except GeminiError as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            return
+        except httpx.TimeoutException:
+            yield f"data: {json.dumps({'error': 'The AI service timed out while generating a response. Please click Retry to ask again.'})}\n\n"
+            return
+        except Exception as e:
+            yield f"data: {json.dumps({'error': f'AI service error: {str(e)}'})}\n\n"
             return
         yield f"data: {json.dumps({'done': True})}\n\n"
 

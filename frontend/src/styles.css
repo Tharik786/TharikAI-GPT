@@ -794,15 +794,134 @@ textarea {
   display: none;
 }
 
+.user-message-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 80%;
+  margin-left: auto;
+}
+
 .message-row-user .bubble-user {
   flex: 0 1 auto;
-  max-width: 80%;
+  max-width: 100%;
   background: var(--bg-input, #24272b);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 20px 20px 6px 20px;
   padding: 10px 16px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  margin-left: auto;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.user-actions-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 5px;
+  padding-right: 4px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Reveal only when hovering over the question row or bubble */
+.message-row-user:hover .user-actions-bar,
+.user-message-wrapper:hover .user-actions-bar,
+.user-actions-bar:focus-within {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.user-actions-bar .msg-action-btn {
+  opacity: 0.85;
+}
+
+.user-actions-bar .msg-action-btn:hover {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .user-actions-bar {
+    opacity: 0.9;
+    visibility: visible;
+    pointer-events: auto;
+  }
+}
+
+/* Prompt Edit Box */
+.bubble-user.is-editing-bubble {
+  width: 100%;
+  max-width: 540px;
+  padding: 12px;
+}
+
+.message-edit-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message-edit-textarea {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  color: var(--text-primary, #ffffff);
+  font-family: inherit;
+  font-size: 14.5px;
+  line-height: 1.55;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 70px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.message-edit-textarea:focus {
+  border-color: #10a37f;
+  box-shadow: 0 0 0 2px rgba(16, 163, 127, 0.25);
+}
+
+.message-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.message-edit-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+}
+
+.message-edit-cancel {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary, #9ca3af);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.message-edit-cancel:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.message-edit-save {
+  background: #10a37f;
+  color: #ffffff;
+}
+
+.message-edit-save:hover {
+  background: #0e8c6d;
 }
 
 
@@ -1135,6 +1254,20 @@ textarea {
 .msg-retry-btn:hover svg {
   transform: rotate(-45deg);
   transition: transform 0.25s ease;
+}
+
+.msg-edit-btn:hover {
+  color: #38bdf8;
+}
+
+.msg-share-btn:hover {
+  color: #a78bfa;
+}
+
+.msg-action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .msg-tts-btn.is-active {
@@ -4801,6 +4934,323 @@ textarea {
   transform: translateY(-1px);
 }
 
+/* ============================================================
+   Document & Presentation Export (Word, Excel, PPT, PDF, All)
+   ============================================================ */
 
+.generated-doc-container {
+  margin: 6px 0 10px 0;
+  width: 100%;
+}
 
-
+.generated-doc-card {
+  padding: 12px 14px;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.generated-doc-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.generated-doc-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.generated-doc-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.generated-doc-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.generated-doc-sub {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 1px;
+}
+
+.generated-doc-toggle-btn {
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.generated-doc-toggle-btn:hover {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.generated-doc-streaming-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.streaming-doc-label {
+  font-size: 11.5px;
+  color: #94a3b8;
+}
+
+.generated-doc-expanded-content {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.doc-export-banner {
+  margin: 4px 0 0 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.doc-export-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.doc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+}
+
+.doc-chip:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.28);
+  transform: translateY(-1.5px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+
+.doc-chip:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.doc-chip:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.doc-chip-badge {
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 2.5px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.4px;
+  line-height: 1;
+}
+
+.doc-chip-icon {
+  opacity: 0.65;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  flex-shrink: 0;
+}
+
+.doc-chip:hover:not(:disabled) .doc-chip-icon {
+  opacity: 1;
+  transform: translateY(1.5px);
+}
+
+.word-badge {
+  background: rgba(37, 99, 235, 0.25);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.excel-badge {
+  background: rgba(16, 185, 129, 0.25);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.ppt-badge {
+  background: rgba(249, 115, 22, 0.25);
+  color: #fb923c;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+}
+
+.pdf-badge {
+  background: rgba(239, 68, 68, 0.25);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.zip-badge {
+  background: rgba(139, 92, 246, 0.25);
+  color: #c084fc;
+  border: 1px solid rgba(139, 92, 246, 0.4);
+}
+
+.doc-chip-word:hover:not(:disabled) {
+  border-color: rgba(96, 165, 250, 0.5);
+}
+
+.doc-chip-excel:hover:not(:disabled) {
+  border-color: rgba(52, 211, 153, 0.5);
+}
+
+.doc-chip-ppt:hover:not(:disabled) {
+  border-color: rgba(251, 146, 60, 0.5);
+}
+
+.doc-chip-pdf:hover:not(:disabled) {
+  border-color: rgba(248, 113, 113, 0.5);
+}
+
+.doc-chip-all {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(59, 130, 246, 0.15));
+  border-color: rgba(139, 92, 246, 0.35);
+}
+
+.doc-chip-all:hover:not(:disabled) {
+  border-color: rgba(192, 132, 252, 0.6);
+  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.25);
+}
+
+.doc-chip.is-success {
+  background: rgba(16, 185, 129, 0.2) !important;
+  border-color: #10b981 !important;
+  color: #34d399 !important;
+}
+
+/* ============================================================
+   Universal Message Export Dropdown
+   ============================================================ */
+
+.msg-export-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.msg-export-btn.is-open {
+  background: rgba(255, 255, 255, 0.12);
+  color: #38bdf8;
+}
+
+.msg-export-dropdown-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  background: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: exportMenuSlideIn 0.18s ease-out;
+}
+
+@keyframes exportMenuSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.msg-export-menu-header {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748b;
+  padding: 6px 10px 4px 10px;
+  letter-spacing: 0.5px;
+}
+
+.msg-export-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.msg-export-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.msg-export-menu-item.item-highlight {
+  color: #c084fc;
+}
+
+.msg-export-menu-item.item-highlight:hover {
+  background: rgba(139, 92, 246, 0.18);
+  color: #e9d5ff;
+}
+
+.menu-badge {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+  line-height: 1;
+}
+
+.msg-export-menu-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 4px 0;
+}

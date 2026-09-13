@@ -4,6 +4,13 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { generateImageRemote } from "../api.js";
+import {
+  exportToWordDoc,
+  exportTableToExcel,
+  exportToPptx,
+  exportToPdf,
+  exportAllInOneZip,
+} from "../utils/exportService.js";
 
 
 function getUserInitial(user) {
@@ -776,16 +783,23 @@ function MessageBubble({
   searchStatus,
   webSearch,
   isStreaming,
+  isAnyStreaming,
   user,
   isSpeaking,
   onSpeak,
   onStopSpeech,
   onRetry,
+  onEdit,
+  userPrompt,
 }) {
 
   const isUser = role === "user";
   const userInitial = getUserInitial(user);
   const [copied, setCopied] = useState(false);
+  const [shared, setShared] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(content || "");
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
 
   // Extract clean text and parsed attachments:
   // For assistant messages, skip expensive document parsing regexes during streaming
@@ -799,11 +813,88 @@ function MessageBubble({
     return parseMessageContent(content, propAttachments);
   }, [isUser, content, propAttachments]);
 
+  useEffect(() => {
+    if (isUser) {
+      setEditText(cleanText || content || "");
+    }
+  }, [isUser, cleanText, content]);
+
+  const fallbackCopy = (text) => {
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "fixed";
+      textArea.style.left = "-999999px";
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+    } catch (e) {
+      console.error("Failed to copy:", e);
+    }
+  };
+
   const handleCopyMessage = () => {
-    if (!cleanText) return;
-    navigator.clipboard.writeText(cleanText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
+    const textToCopy = cleanText || content || "";
+    if (!textToCopy) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1600);
+      }).catch(() => {
+        fallbackCopy(textToCopy);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1600);
+      });
+    } else {
+      fallbackCopy(textToCopy);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    }
+  };
+
+  const handleShare = async () => {
+    const textToShare = cleanText || content || "";
+    if (!textToShare) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "Question from TharikAI",
+          text: textToShare,
+        });
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          fallbackCopy(textToShare);
+          setShared(true);
+          setTimeout(() => setShared(false), 1600);
+        }
+      }
+    } else {
+      fallbackCopy(textToShare);
+      setShared(true);
+      setTimeout(() => setShared(false), 1600);
+    }
+  };
+
+  const handleStartEdit = () => {
+    setEditText(cleanText || content || "");
+    setIsEditing(true);
+  };
+
+  const handleCancelEdit = () => {
+    setEditText(cleanText || content || "");
+    setIsEditing(false);
+  };
+
+  const handleSaveEdit = () => {
+    const trimmed = (editText || "").trim();
+    if (!trimmed) return;
+    setIsEditing(false);
+    if (onEdit) {
+      onEdit(id, trimmed);
+    } else if (onRetry) {
+      onRetry(id);
+    }
   };
 
   const handleToggleSpeak = () => {
@@ -811,6 +902,150 @@ function MessageBubble({
       if (onStopSpeech) onStopSpeech();
     } else {
       if (onSpeak) onSpeak(id, cleanText);
+    }
+  };
+
+  // Document & presentation export handling
+  const [exportingFormat, setExportingFormat] = useState(null);
+  const [exportSuccess, setExportSuccess] = useState(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
+        setExportMenuOpen(false);
+      }
+    };
+    if (exportMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [exportMenuOpen]);
+
+  // Detect ONLY the specific format the user asked for in their question
+  const requestedFormats = useMemo(() => {
+    if (isUser) return [];
+
+    const p = (userPrompt || "").trim().toLowerCase();
+
+    // 1. Explicit request for ALL formats
+    const isExplicitAll =
+      /\b(all\s+formats?|all\s+files?|all\s+in\s+one|all\s+docs?|all\s+documents?)\b/i.test(p) ||
+      (/\b(excel|xlsx)\b/i.test(p) && /\b(docx?)\b/i.test(p) && /\b(ppt|pptx)\b/i.test(p));
+
+    if (isExplicitAll) {
+      return ["ppt", "word", "excel", "pdf", "all"];
+    }
+
+    // 2. PowerPoint (.pptx) - If user specifically asked for PPT, show ONLY PPT!
+    if (/\b(ppt|pptx|powerpoint|presentation|slides?|slide\s*deck|keynote)\b/i.test(p)) {
+      return ["ppt"];
+    }
+
+    // 3. Excel (.xlsx) - If user specifically asked for Excel, show ONLY Excel!
+    if (/\b(excel|xlsx|spreadsheet|spreadsheets?|sheets?|csv)\b/i.test(p)) {
+      return ["excel"];
+    }
+
+    // 4. Word (.docx) - If user specifically asked for Word, show ONLY Word!
+    if (
+      /\b(docx|word\s+doc|word\s+document|word\s+format|word\s+file|ms\s*word)\b/i.test(p) ||
+      (/\bword\b/i.test(p) && /\b(doc|document|generate|create|make|write|download|export|format)\b/i.test(p))
+    ) {
+      return ["word"];
+    }
+
+    // 5. PDF (.pdf) - If user specifically asked for PDF, show ONLY PDF!
+    if (/\b(pdf|in\s+pdf|pdf\s+format|pdf\s+file)\b/i.test(p)) {
+      return ["pdf"];
+    }
+
+    // Fallback if userPrompt was empty/lost: inspect cleanText structure
+    if (!p && cleanText) {
+      if (/^##\s*Slide\s*\d+/im.test(cleanText) || /^Slide\s*\d+:/im.test(cleanText)) {
+        return ["ppt"];
+      }
+    }
+
+    return [];
+  }, [isUser, userPrompt, cleanText]);
+
+  // Extract document title and stats for generated files
+  const documentMeta = useMemo(() => {
+    if (!cleanText) return { title: "Document", stats: "" };
+    let title = "Document";
+    const h1Match = cleanText.match(/^#\s+(.+)$/m);
+    if (h1Match && h1Match[1]) {
+      title = h1Match[1].replace(/[*_`]/g, "").trim().slice(0, 48);
+    } else {
+      const slideMatch = cleanText.match(/^##?\s*(?:Slide\s*\d+:)?\s*(.+)$/im);
+      if (slideMatch && slideMatch[1]) {
+        title = slideMatch[1].replace(/[*_`#]/g, "").trim().slice(0, 48);
+      } else {
+        const firstLine = cleanText.split("\n").find((l) => l.trim() && !l.trim().startsWith("```") && !l.trim().startsWith("|"));
+        if (firstLine) {
+          title = firstLine.replace(/[*_#`]/g, "").trim().slice(0, 44);
+        }
+      }
+    }
+
+    let stats = "Generated Document";
+    if (requestedFormats.includes("ppt")) {
+      const slideMatches = cleanText.match(/^##?\s*(?:Slide\s*\d+|#)/gim);
+      const count = slideMatches ? slideMatches.length : 6;
+      stats = `${Math.max(count, 5)} Slides • PowerPoint Presentation`;
+    } else if (requestedFormats.includes("excel")) {
+      const rowsCount = cleanText.split("\n").filter((l) => l.includes("|")).length;
+      stats = `${Math.max(rowsCount, 8)} Data Rows • Excel Spreadsheet`;
+    } else if (requestedFormats.includes("word")) {
+      stats = "Complete Document • Microsoft Word (.docx)";
+    } else if (requestedFormats.includes("pdf")) {
+      stats = "Executive Document • PDF (.pdf)";
+    } else if (requestedFormats.includes("all")) {
+      stats = "Full Package (PPT, Word, Excel, PDF) • ZIP";
+    }
+
+    return { title, stats };
+  }, [cleanText, requestedFormats]);
+
+  const handleExport = async (format) => {
+    if (!cleanText || exportingFormat) return;
+    setExportingFormat(format);
+    try {
+      let title = "Document";
+      const h1Match = cleanText.match(/^#\s+(.+)$/m);
+      if (h1Match && h1Match[1]) {
+        title = h1Match[1].replace(/[*_`]/g, "").trim().slice(0, 48);
+      } else {
+        const firstLine = cleanText.split("\n").find((l) => l.trim() && !l.trim().startsWith("```") && !l.trim().startsWith("|"));
+        if (firstLine) {
+          title = firstLine.replace(/[*_#`]/g, "").trim().slice(0, 40);
+        }
+      }
+      const cleanTitle = title || "TharikAI_Export";
+      const safeFilename = cleanTitle.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 36) || "TharikAI_Document";
+
+      if (format === "word") {
+        exportToWordDoc(cleanTitle, cleanText, `${safeFilename}.docx`);
+      } else if (format === "excel") {
+        exportTableToExcel(cleanText, `${safeFilename}.xlsx`);
+      } else if (format === "ppt") {
+        await exportToPptx(cleanTitle, cleanText, `${safeFilename}.pptx`);
+      } else if (format === "pdf") {
+        exportToPdf(cleanTitle, cleanText, `${safeFilename}.pdf`);
+      } else if (format === "all") {
+        await exportAllInOneZip(cleanTitle, cleanText, `${safeFilename}_All_Formats.zip`);
+      }
+      setExportSuccess(format);
+      setTimeout(() => setExportSuccess(null), 2500);
+    } catch (err) {
+      console.error("Export error:", err);
+      alert(`Export to ${format.toUpperCase()} failed: ${err.message || "Unknown error"}`);
+    } finally {
+      setExportingFormat(null);
     }
   };
 
@@ -826,187 +1061,600 @@ function MessageBubble({
           <img src="/ai-avatar.png" alt="TharikAI" className="avatar-ai-img" />
         )}
       </div>
-      <div
-        className={`message-bubble ${isUser ? "bubble-user" : "bubble-assistant"} ${isStreaming ? "is-streaming" : ""
-          } ${isSpeaking ? "bubble-speaking" : ""}`}
-      >
 
+      {isUser ? (
+        <div className="user-message-wrapper">
+          <div
+            className={`message-bubble bubble-user ${isStreaming ? "is-streaming" : ""} ${isEditing ? "is-editing-bubble" : ""}`}
+          >
+            {/* Render document attachment cards */}
+            {attachments && attachments.length > 0 && (
+              <div className="message-attachments-container">
+                {attachments.map((att, idx) => (
+                  <DocumentAttachmentCard key={idx} attachment={att} />
+                ))}
+              </div>
+            )}
 
-        {/* Render document attachment cards above or below the message text */}
-        {attachments && attachments.length > 0 && (
-          <div className="message-attachments-container">
-            {attachments.map((att, idx) => (
-              <DocumentAttachmentCard key={idx} attachment={att} />
-            ))}
-          </div>
-        )}
-
-        {/* Real-time Web Search Status indicator */}
-        {searchStatus && (
-          <div className="message-search-status">
-            <span className="search-status-spinner" />
-            <span className="search-status-text">{searchStatus}</span>
-          </div>
-        )}
-
-        {/* Verified Web Sources Carousel/Pills */}
-        {sources && sources.length > 0 && (
-          <div className="message-sources-wrapper">
-            <div className="sources-header">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="2" y1="12" x2="22" y2="12" />
-                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-              </svg>
-              <span>{sources.length} Sources</span>
-            </div>
-            <div className="sources-chips-list">
-              {sources.map((s, idx) => (
-                <a
-                  key={idx}
-                  href={s.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="source-chip"
-                  title={`${s.title}\n${s.url}`}
-                >
-                  <span className="source-domain">{s.domain || "web"}</span>
-                  <span className="source-title">{s.title}</span>
-                </a>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {cleanText ? (
-          <div className="markdown-content">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={MARKDOWN_COMPONENTS}
-              urlTransform={(url) => url}
-            >
-              {cleanText}
-            </ReactMarkdown>
-          </div>
-        ) : (
-          isStreaming && (
-            <div className="typing-indicator" aria-label="Thinking...">
-              <span className="typing-dot" />
-              <span className="typing-dot" />
-              <span className="typing-dot" />
-            </div>
-          )
-        )}
-
-        {isStreaming && cleanText && (
-          <span className="streaming-dot-indicator" aria-hidden="true">
-            <span className="streaming-dot-pulse" />
-          </span>
-        )}
-
-        {/* Assistant Message Actions (Read aloud TTS, Copy, Retry - Icons Only) */}
-        {!isUser && !isStreaming && cleanText && (
-          <div className="message-actions-bar">
-            <button
-              type="button"
-              className={`msg-action-btn msg-tts-btn ${isSpeaking ? "is-active" : ""}`}
-              onClick={handleToggleSpeak}
-              title={isSpeaking ? "Stop speaking" : "Read aloud"}
-              aria-label={isSpeaking ? "Stop speaking" : "Read aloud"}
-            >
-              {isSpeaking ? (
-                <>
-                  <span className="speaking-wave-bars">
-                    <span className="wave-bar bar-1" />
-                    <span className="wave-bar bar-2" />
-                    <span className="wave-bar bar-3" />
-                  </span>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                    <rect x="5" y="5" width="14" height="14" rx="2" />
-                  </svg>
-                </>
-              ) : (
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                </svg>
-              )}
-            </button>
-
-            <button
-              type="button"
-              className="msg-action-btn msg-copy-btn"
-              onClick={handleCopyMessage}
-              title={copied ? "Copied!" : "Copy message"}
-              aria-label="Copy message"
-            >
-              {copied ? (
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#10a37f"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-              )}
-            </button>
-
-            {/* Retry / Regenerate Response Button */}
-            {onRetry && (
-              <button
-                type="button"
-                className="msg-action-btn msg-retry-btn"
-                onClick={() => onRetry(id)}
-                title="Retry message"
-                aria-label="Retry message"
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="1 4 1 10 7 10" />
-                  <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                </svg>
-              </button>
+            {isEditing ? (
+              <div className="message-edit-box">
+                <textarea
+                  className="message-edit-textarea"
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSaveEdit();
+                    } else if (e.key === "Escape") {
+                      handleCancelEdit();
+                    }
+                  }}
+                  autoFocus
+                />
+                <div className="message-edit-actions">
+                  <button
+                    type="button"
+                    className="message-edit-btn message-edit-cancel"
+                    onClick={handleCancelEdit}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="message-edit-btn message-edit-save"
+                    onClick={handleSaveEdit}
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            ) : (
+              cleanText ? (
+                <div className="markdown-content">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={MARKDOWN_COMPONENTS}
+                    urlTransform={(url) => url}
+                  >
+                    {cleanText}
+                  </ReactMarkdown>
+                </div>
+              ) : null
             )}
           </div>
-        )}
-      </div>
+
+          {/* User Message Actions: 1) History/Retry, 2) Copy, 3) Share, 4) Edit */}
+          {!isEditing && (cleanText || content || (attachments && attachments.length > 0)) && (
+            <div className="message-actions-bar user-actions-bar">
+              {/* 1. Retry / History with Clock */}
+              {onRetry && (
+                <button
+                  type="button"
+                  className="msg-action-btn msg-retry-btn"
+                  onClick={() => onRetry(id)}
+                  disabled={isAnyStreaming}
+                  title="Retry question"
+                  aria-label="Retry question"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                    <path d="M3 3v5h5" />
+                    <path d="M12 7v5l3 3" />
+                  </svg>
+                </button>
+              )}
+
+              {/* 2. Copy (Overlapping rounded squares) */}
+              <button
+                type="button"
+                className="msg-action-btn msg-copy-btn"
+                onClick={handleCopyMessage}
+                title={copied ? "Copied!" : "Copy question"}
+                aria-label="Copy question"
+              >
+                {copied ? (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10a37f" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                ) : (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect width="13" height="13" x="8" y="8" rx="2.5" ry="2.5" />
+                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                  </svg>
+                )}
+              </button>
+
+              {/* 3. Share (Tray with upward arrow) */}
+              <button
+                type="button"
+                className="msg-action-btn msg-share-btn"
+                onClick={handleShare}
+                title={shared ? "Copied to share!" : "Share question"}
+                aria-label="Share question"
+              >
+                {shared ? (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10a37f" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                ) : (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                    <polyline points="16 6 12 2 8 6" />
+                    <line x1="12" y1="2" x2="12" y2="15" />
+                  </svg>
+                )}
+              </button>
+
+              {/* 4. Edit (Angled pencil) */}
+              <button
+                type="button"
+                className="msg-action-btn msg-edit-btn"
+                onClick={handleStartEdit}
+                disabled={isAnyStreaming}
+                title="Edit question"
+                aria-label="Edit question"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                  <path d="m15 5 4 4" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div
+          className={`message-bubble bubble-assistant ${isStreaming ? "is-streaming" : ""
+            } ${isSpeaking ? "bubble-speaking" : ""}`}
+        >
+          {/* Render document attachment cards above or below the message text */}
+          {attachments && attachments.length > 0 && (
+            <div className="message-attachments-container">
+              {attachments.map((att, idx) => (
+                <DocumentAttachmentCard key={idx} attachment={att} />
+              ))}
+            </div>
+          )}
+
+          {/* Real-time Web Search Status indicator */}
+          {searchStatus && (
+            <div className="message-search-status">
+              <span className="search-status-spinner" />
+              <span className="search-status-text">{searchStatus}</span>
+            </div>
+          )}
+
+          {/* Verified Web Sources Carousel/Pills */}
+          {sources && sources.length > 0 && (
+            <div className="message-sources-wrapper">
+              <div className="sources-header">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="2" y1="12" x2="22" y2="12" />
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                </svg>
+                <span>{sources.length} Sources</span>
+              </div>
+              <div className="sources-chips-list">
+                {sources.map((s, idx) => (
+                  <a
+                    key={idx}
+                    href={s.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="source-chip"
+                    title={`${s.title}\n${s.url}`}
+                  >
+                    <span className="source-domain">{s.domain || "web"}</span>
+                    <span className="source-title">{s.title}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {requestedFormats.length > 0 ? (
+            <div className="generated-doc-container">
+              <div className="generated-doc-card">
+                <div className="generated-doc-header">
+                  <div className="generated-doc-icon-wrap">
+                    {requestedFormats.includes("ppt") ? (
+                      <span className="doc-chip-badge ppt-badge">PPTX</span>
+                    ) : requestedFormats.includes("excel") ? (
+                      <span className="doc-chip-badge excel-badge">XLSX</span>
+                    ) : requestedFormats.includes("word") ? (
+                      <span className="doc-chip-badge word-badge">DOCX</span>
+                    ) : requestedFormats.includes("pdf") ? (
+                      <span className="doc-chip-badge pdf-badge">PDF</span>
+                    ) : (
+                      <span className="doc-chip-badge zip-badge">ZIP</span>
+                    )}
+                  </div>
+
+                  <div className="generated-doc-info">
+                    <div className="generated-doc-title" title={documentMeta.title}>
+                      {documentMeta.title}
+                    </div>
+                    <div className="generated-doc-sub">{documentMeta.stats}</div>
+                  </div>
+
+                  {cleanText && (
+                    <button
+                      type="button"
+                      className="generated-doc-toggle-btn"
+                      onClick={() => setDetailsExpanded(!detailsExpanded)}
+                      title={detailsExpanded ? "Hide detailed outline" : "Preview detailed outline"}
+                    >
+                      {detailsExpanded ? "Hide outline ▲" : "Preview outline ▼"}
+                    </button>
+                  )}
+                </div>
+
+                {/* Direct 1-Click Download Button */}
+                {!isStreaming && cleanText && (
+                  <div className="doc-export-banner">
+                    <div className="doc-export-chips">
+                      {/* PowerPoint (.pptx) */}
+                      {requestedFormats.includes("ppt") && (
+                        <button
+                          type="button"
+                          className={`doc-chip doc-chip-ppt ${exportingFormat === "ppt" ? "is-exporting" : ""} ${exportSuccess === "ppt" ? "is-success" : ""}`}
+                          onClick={() => handleExport("ppt")}
+                          disabled={!!exportingFormat}
+                          title="Download as PowerPoint Presentation (.pptx)"
+                        >
+                          <span className="doc-chip-badge ppt-badge">PPTX</span>
+                          <span className="doc-chip-name">
+                            {exportingFormat === "ppt" ? "Generating..." : exportSuccess === "ppt" ? "✓ Saved PPTX!" : "Download PowerPoint (.pptx)"}
+                          </span>
+                          <svg className="doc-chip-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                        </button>
+                      )}
+
+                      {/* Word (.docx) */}
+                      {requestedFormats.includes("word") && (
+                        <button
+                          type="button"
+                          className={`doc-chip doc-chip-word ${exportingFormat === "word" ? "is-exporting" : ""} ${exportSuccess === "word" ? "is-success" : ""}`}
+                          onClick={() => handleExport("word")}
+                          disabled={!!exportingFormat}
+                          title="Download as Microsoft Word (.docx)"
+                        >
+                          <span className="doc-chip-badge word-badge">DOCX</span>
+                          <span className="doc-chip-name">
+                            {exportingFormat === "word" ? "Generating..." : exportSuccess === "word" ? "✓ Saved DOCX!" : "Download Word (.docx)"}
+                          </span>
+                          <svg className="doc-chip-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                        </button>
+                      )}
+
+                      {/* Excel (.xlsx) */}
+                      {requestedFormats.includes("excel") && (
+                        <button
+                          type="button"
+                          className={`doc-chip doc-chip-excel ${exportingFormat === "excel" ? "is-exporting" : ""} ${exportSuccess === "excel" ? "is-success" : ""}`}
+                          onClick={() => handleExport("excel")}
+                          disabled={!!exportingFormat}
+                          title="Download as Excel Spreadsheet (.xlsx)"
+                        >
+                          <span className="doc-chip-badge excel-badge">XLSX</span>
+                          <span className="doc-chip-name">
+                            {exportingFormat === "excel" ? "Generating..." : exportSuccess === "excel" ? "✓ Saved XLSX!" : "Download Excel (.xlsx)"}
+                          </span>
+                          <svg className="doc-chip-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                        </button>
+                      )}
+
+                      {/* PDF (.pdf) */}
+                      {requestedFormats.includes("pdf") && (
+                        <button
+                          type="button"
+                          className={`doc-chip doc-chip-pdf ${exportingFormat === "pdf" ? "is-exporting" : ""} ${exportSuccess === "pdf" ? "is-success" : ""}`}
+                          onClick={() => handleExport("pdf")}
+                          disabled={!!exportingFormat}
+                          title="Download as PDF Document (.pdf)"
+                        >
+                          <span className="doc-chip-badge pdf-badge">PDF</span>
+                          <span className="doc-chip-name">
+                            {exportingFormat === "pdf" ? "Generating..." : exportSuccess === "pdf" ? "✓ Saved PDF!" : "Download PDF (.pdf)"}
+                          </span>
+                          <svg className="doc-chip-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                        </button>
+                      )}
+
+                      {/* All Formats (.zip) */}
+                      {requestedFormats.includes("all") && (
+                        <button
+                          type="button"
+                          className={`doc-chip doc-chip-all ${exportingFormat === "all" ? "is-exporting" : ""} ${exportSuccess === "all" ? "is-success" : ""}`}
+                          onClick={() => handleExport("all")}
+                          disabled={!!exportingFormat}
+                          title="Download All Formats in One ZIP (.zip)"
+                        >
+                          <span className="doc-chip-badge zip-badge">ZIP</span>
+                          <span className="doc-chip-name">
+                            {exportingFormat === "all" ? "Packaging..." : exportSuccess === "all" ? "✓ All Saved!" : "Download All Formats (.zip)"}
+                          </span>
+                          <svg className="doc-chip-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {isStreaming && (
+                  <div className="generated-doc-streaming-bar">
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                    <span className="streaming-doc-label">Preparing file contents...</span>
+                  </div>
+                )}
+
+                {/* Collapsible raw outline - only visible if explicitly toggled by user */}
+                {detailsExpanded && cleanText && (
+                  <div className="generated-doc-expanded-content">
+                    <div className="markdown-content">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={MARKDOWN_COMPONENTS}
+                        urlTransform={(url) => url}
+                      >
+                        {cleanText}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            cleanText ? (
+              <div className="markdown-content">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={MARKDOWN_COMPONENTS}
+                  urlTransform={(url) => url}
+                >
+                  {cleanText}
+                </ReactMarkdown>
+              </div>
+            ) : (
+              isStreaming && (
+                <div className="typing-indicator" aria-label="Thinking...">
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </div>
+              )
+            )
+          )}
+
+          {isStreaming && cleanText && (
+            <span className="streaming-dot-indicator" aria-hidden="true">
+              <span className="streaming-dot-pulse" />
+            </span>
+          )}
+
+          {/* Assistant Message Actions (Read aloud TTS, Copy, Export, Retry - Icons Only) */}
+          {!isStreaming && (cleanText || onRetry) && (
+            <div className="message-actions-bar assistant-actions-bar">
+              {cleanText && (
+                <button
+                  type="button"
+                  className={`msg-action-btn msg-tts-btn ${isSpeaking ? "is-active" : ""}`}
+                  onClick={handleToggleSpeak}
+                  title={isSpeaking ? "Stop speaking" : "Read aloud"}
+                  aria-label={isSpeaking ? "Stop speaking" : "Read aloud"}
+                >
+                  {isSpeaking ? (
+                    <>
+                      <span className="speaking-wave-bars">
+                        <span className="wave-bar bar-1" />
+                        <span className="wave-bar bar-2" />
+                        <span className="wave-bar bar-3" />
+                      </span>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="5" y="5" width="14" height="14" rx="2" />
+                      </svg>
+                    </>
+                  ) : (
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                    </svg>
+                  )}
+                </button>
+              )}
+
+              {cleanText && (
+                <button
+                  type="button"
+                  className="msg-action-btn msg-copy-btn"
+                  onClick={handleCopyMessage}
+                  title={copied ? "Copied!" : "Copy response"}
+                  aria-label="Copy response"
+                >
+                  {copied ? (
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#10a37f"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : (
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                  )}
+                </button>
+              )}
+
+              {/* Universal Export Dropdown */}
+              {cleanText && (
+                <div className="msg-export-wrapper" ref={exportMenuRef}>
+                  <button
+                    type="button"
+                    className={`msg-action-btn msg-export-btn ${exportMenuOpen ? "is-open" : ""}`}
+                    onClick={() => setExportMenuOpen(!exportMenuOpen)}
+                    title="Export response (Word, Excel, PPT, PDF, All)"
+                    aria-label="Export response"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  </button>
+
+                  {exportMenuOpen && (
+                    <div className="msg-export-dropdown-menu">
+                      <div className="msg-export-menu-header">Export Document</div>
+                      <button
+                        type="button"
+                        className="msg-export-menu-item"
+                        onClick={() => {
+                          setExportMenuOpen(false);
+                          handleExport("word");
+                        }}
+                      >
+                        <span className="menu-badge word-badge">DOCX</span>
+                        <span>Word Document (.docx)</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="msg-export-menu-item"
+                        onClick={() => {
+                          setExportMenuOpen(false);
+                          handleExport("excel");
+                        }}
+                      >
+                        <span className="menu-badge excel-badge">XLSX</span>
+                        <span>Excel Spreadsheet (.xlsx)</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="msg-export-menu-item"
+                        onClick={() => {
+                          setExportMenuOpen(false);
+                          handleExport("ppt");
+                        }}
+                      >
+                        <span className="menu-badge ppt-badge">PPTX</span>
+                        <span>PowerPoint Presentation (.pptx)</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="msg-export-menu-item"
+                        onClick={() => {
+                          setExportMenuOpen(false);
+                          handleExport("pdf");
+                        }}
+                      >
+                        <span className="menu-badge pdf-badge">PDF</span>
+                        <span>PDF Document (.pdf)</span>
+                      </button>
+                      <div className="msg-export-menu-divider" />
+                      <button
+                        type="button"
+                        className="msg-export-menu-item item-highlight"
+                        onClick={() => {
+                          setExportMenuOpen(false);
+                          handleExport("all");
+                        }}
+                      >
+                        <span className="menu-badge zip-badge">ZIP</span>
+                        <span>Download All Formats (.zip)</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Retry / Regenerate Response Button */}
+              {onRetry && (
+                <button
+                  type="button"
+                  className="msg-action-btn msg-retry-btn"
+                  onClick={() => onRetry(id)}
+                  disabled={isAnyStreaming}
+                  title="Retry response"
+                  aria-label="Retry response"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

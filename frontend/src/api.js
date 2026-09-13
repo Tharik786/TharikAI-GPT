@@ -189,7 +189,7 @@ export async function generateImageRemote(prompt) {
     } else if (res.status === 429) {
       throw new Error(`Rate limit exceeded (429): ${errorDetail || "Too many requests. Please wait a moment."}`);
     } else if (res.status >= 500) {
-      throw new Error(`GPT Image 2.5 API error (${res.status}): ${errorDetail || "Internal server error."}`);
+      throw new Error(`AI Image Generation error (${res.status}): ${errorDetail || "Internal server error."}`);
     } else {
       throw new Error(`Image generation failed (${res.status}): ${errorDetail || res.statusText}`);
     }

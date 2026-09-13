@@ -564,12 +564,64 @@ def fetch_rendered_file(render_id: str) -> bytes:
         raise RuntimeError(f"Failed to download rendered file {render_id} (HTTP {e.code}): {err_msg}")
 
 
+def clean_document_topic_and_format(text: str) -> Tuple[Optional[str], str]:
+    """
+    Extracts the clean topic name and the desired format from user prompt.
+    Returns (clean_topic, format) where format is one of:
+    'ppt', 'excel', 'docx', 'all', 'pdf'
+    """
+    if not text or len(text.strip()) < 3:
+        return None, "pdf"
+
+    cleaned = text.strip()
+
+    # Determine requested format strictly
+    has_ppt = bool(re.search(r'\b(ppt|pptx|powerpoint|presentation|slide\s*deck|slides?)\b', cleaned, re.IGNORECASE))
+    has_excel = bool(re.search(r'\b(excel|xlsx|spreadsheet|sheets?|csv)\b', cleaned, re.IGNORECASE))
+    has_docx = bool(re.search(r'\b(docx|word\s+doc|word\s+format|word\s+file|ms\s*word)\b', cleaned, re.IGNORECASE))
+    has_pdf = bool(re.search(r'\b(pdf|in\s+pdf|pdf\s+format|pdf\s+file)\b', cleaned, re.IGNORECASE))
+
+    has_all = bool(re.search(r'\b(all\s+formats?|all\s+files?|all\s+in\s+one|every\s+format|all\s+of\s+them)\b', cleaned, re.IGNORECASE)) or \
+              bool(re.search(r'\b(generate|create|export|download)\s+(?:all|everything)\b', cleaned, re.IGNORECASE)) or \
+              (has_ppt and has_excel and has_docx)
+
+    if has_all:
+        fmt = "all"
+    elif has_ppt:
+        fmt = "ppt"
+    elif has_excel:
+        fmt = "excel"
+    elif has_docx:
+        fmt = "docx"
+    elif has_pdf:
+        fmt = "pdf"
+    else:
+        fmt = "doc"
+
+    # Extract clean topic
+    topic = cleaned
+
+    # Strip format directives like "I want ppt format generate them", "in docx format", "generate all"
+    topic = re.sub(r'\b(?:i\s+want\s+)?(?:ppt|pptx|powerpoint|presentation|excel|xlsx|spreadsheet|word|docx?|pdf|all)\s*(?:format)?(?:\s+generate\s+them)?\b', '', topic, flags=re.IGNORECASE)
+    topic = re.sub(r'\b(?:generate|create|write|make|export|download|prepare|build|give\s+me)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:ppt|pptx|presentation|slides?|excel|xlsx|spreadsheet|word|docx?|pdf|document|doc|report|notes|all)?\s*(?:about|on|for|of|regarding)?\b', '', topic, flags=re.IGNORECASE)
+    topic = re.sub(r'\b(?:format|generate\s+them|make\s+them|in\s+ppt|in\s+docx|in\s+excel|in\s+pdf)\b', '', topic, flags=re.IGNORECASE)
+
+    # Clean leading/trailing punctuation and whitespace
+    topic = re.sub(r'^[:\s,.-]+|[:\s,.-]+$', '', topic).strip()
+
+    if not topic or len(topic) < 2:
+        topic = "Knowledge Overview"
+
+    return topic, fmt
+
+
 def detect_document_prompt(text: str) -> Optional[str]:
     """
-    Detects if user is asking to create, write, or generate a document/report/PDF.
+    Detects if user is asking to create, write, or generate a document, spreadsheet,
+    presentation, or all formats (Word DOCX, Excel XLSX, PPT, PDF, ALL).
     Returns the document topic/prompt if detected, otherwise None.
     """
-    if not text or len(text.strip()) < 4:
+    if not text or len(text.strip()) < 3:
         return None
 
     cleaned = text.strip()
@@ -578,22 +630,21 @@ def detect_document_prompt(text: str) -> Optional[str]:
     if re.search(r'\b(draw|paint|picture|photo|illustration|wallpaper|portrait|image)\b', cleaned, re.IGNORECASE):
         return None
 
-    patterns = [
-        # Conversational questions: "can u generate an pdf for...", "could you make a document on..."
-        r'^(?:(?:can|could|will|would)\s+(?:you|u)\s+)?(?:please\s+)?(?:help\s+me\s+)?(?:generate|create|write|make|prepare|build|produce|export|give\s+me)\s+(?:me\s+)?(?:an?|the|some)?\s*(?:new\s+)?(?:pdf|document|doc|report|whitepaper|paper|brief|summary)(?:\s+file)?(?:\s+(?:about|on|for|regarding|of))?\s*(.+)$',
-        # Simple commands: "pdf report on...", "generate document for..."
-        r'^(?:pdf|document|doc|report)\s+(?:generation|generator|creator)?\s*(?:about|on|for|of)?\s*(.+)$',
-        # Inline commands: "generate a pdf on X"
-        r'.*?\b(?:generate|create|make|write|download)\s+(?:an?|the)?\s*(?:pdf|document|report)\s+(?:about|on|for|of)\s+(.+)$'
-    ]
+    # Check for document, presentation, spreadsheet, or all-formats requests
+    has_doc_trigger = bool(re.search(
+        r'\b(ppt|pptx|powerpoint|presentation|slides?|excel|xlsx|spreadsheet|sheet|docx?|word|doc|pdf|document|report|notes|whitepaper|all\s+formats?)\b',
+        cleaned,
+        re.IGNORECASE
+    ))
 
-    for pat in patterns:
-        m = re.match(pat, cleaned, re.IGNORECASE)
-        if m:
-            topic = m.group(1).strip()
-            # Clean trailing punctuation
-            topic = re.sub(r'[.?!]+$', '', topic).strip()
-            if topic and len(topic) >= 2:
-                return topic
+    has_action_trigger = bool(re.search(
+        r'\b(generate|create|write|make|prepare|build|produce|export|download|give\s+me|want)\b',
+        cleaned,
+        re.IGNORECASE
+    ))
+
+    if has_doc_trigger and has_action_trigger:
+        topic, _ = clean_document_topic_and_format(cleaned)
+        return topic or cleaned
 
     return None

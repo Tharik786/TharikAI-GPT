@@ -40,10 +40,15 @@ def get_system_prompt() -> str:
         f"   - When live web search results are provided in your context, always ground your response in the real-time internet results.\n"
         f"   - Report current news, factual updates, and real-world information accurately as verified by authoritative web sources.\n"
         f"   - Cite sources naturally using markdown links e.g. [Source Title](URL) or [1], [2].\n\n"
-        f"5. AI DOCUMENT & PDF GENERATION (POWERED BY CARBONE.IO):\n"
-        f"   - TharikAI HAS full capability to generate, render, and provide downloadable PDF executive documents and reports via integrated Carbone.io!\n"
-        f"   - NEVER claim that you cannot create or send downloadable PDF files.\n"
-        f"   - When asked to write or create a document/report/PDF, provide a comprehensive, executive-level structured report with clear sections, bullet points, and tables.\n\n"
+        f"5. AI DOCUMENT, SPREADSHEET & PRESENTATION GENERATION (WORD DOCX, EXCEL XLSX, PPT, PDF, ALL):\n"
+        f"   - TharikAI HAS full native capability to generate, render, and export downloadable Microsoft Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF (.pdf), and All-in-One (.zip) documents!\n"
+        f"   - NEVER claim that you cannot create or send downloadable Word, Excel, PowerPoint, or PDF files. The user has direct 1-click download buttons for DOCX, XLSX, PPTX, PDF, and ZIP right on your response!\n"
+        f"   - When asked to generate an Excel sheet, Word doc, PPT presentation, PDF, or all formats:\n"
+        f"     1. Start with a clear Markdown H1 title (# Topic Name).\n"
+        f"     2. Provide structured text sections (## Section Name) with in-depth analysis.\n"
+        f"     3. Provide rich, detailed Markdown Tables (| Col 1 | Col 2 | Col 3 |) so the Excel exporter can generate a beautiful spreadsheet.\n"
+        f"     4. Provide slide-by-slide breakdowns (e.g. ## Slide 1: Topic with bullet points) so the PowerPoint exporter can build clear slides.\n"
+        f"     5. Deliver the content directly and professionally for the requested format without outputting generic download reminder disclaimers.\n\n"
         f"Tone: Natural, warm, polite, culturally appropriate, and concise.\n"
     )
 
@@ -75,8 +80,8 @@ def _get_http_client() -> httpx.AsyncClient:
     global _CLIENT_POOL
     if _CLIENT_POOL is None or _CLIENT_POOL.is_closed:
         _CLIENT_POOL = httpx.AsyncClient(
-            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50, keepalive_expiry=30.0),
-            timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=10.0),
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50, keepalive_expiry=60.0),
+            timeout=httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0),
         )
     return _CLIENT_POOL
 
@@ -118,31 +123,36 @@ async def _stream_openrouter(
     }
 
     client = _get_http_client()
-    async with client.stream("POST", url, headers=headers, json=payload) as response:
-        if response.status_code != 200:
-            body = await response.aread()
-            raw_err = body.decode(errors="ignore")
-            try:
-                err_json = json.loads(raw_err)
-                msg = err_json.get("error", {}).get("message", raw_err)
-                raise GeminiError(f"OpenRouter API error ({response.status_code}): {msg}")
-            except json.JSONDecodeError:
-                raise GeminiError(f"OpenRouter API error ({response.status_code}): {raw_err}")
+    try:
+        async with client.stream("POST", url, headers=headers, json=payload) as response:
+            if response.status_code != 200:
+                body = await response.aread()
+                raw_err = body.decode(errors="ignore")
+                try:
+                    err_json = json.loads(raw_err)
+                    msg = err_json.get("error", {}).get("message", raw_err)
+                    raise GeminiError(f"OpenRouter API error ({response.status_code}): {msg}")
+                except json.JSONDecodeError:
+                    raise GeminiError(f"OpenRouter API error ({response.status_code}): {raw_err}")
 
-        async for line in response.aiter_lines():
-            if not line or not line.startswith("data: "):
-                continue
-            data_str = line[len("data: "):].strip()
-            if data_str == "[DONE]":
-                break
-            try:
-                data = json.loads(data_str)
-                delta = data.get("choices", [{}])[0].get("delta", {})
-                content = delta.get("content", "") if isinstance(delta, dict) else str(delta or "")
-                if content:
-                    yield content
-            except json.JSONDecodeError:
-                continue
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[len("data: "):].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    data = json.loads(data_str)
+                    delta = data.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content", "") if isinstance(delta, dict) else str(delta or "")
+                    if content:
+                        yield content
+                except json.JSONDecodeError:
+                    continue
+    except httpx.TimeoutException as e:
+        raise GeminiError("OpenRouter timed out while generating a response. Please try again.") from e
+    except httpx.HTTPError as e:
+        raise GeminiError(f"Network error while connecting to OpenRouter: {str(e)}") from e
 
 
 async def _stream_gemini(
@@ -206,7 +216,8 @@ async def _stream_gemini(
     }
 
     client = _get_http_client()
-    async with client.stream("POST", url, json=payload) as response:
+    try:
+        async with client.stream("POST", url, json=payload) as response:
             if response.status_code != 200:
                 body = await response.aread()
                 raw_err = body.decode(errors="ignore")
@@ -242,6 +253,10 @@ async def _stream_gemini(
                                 yield text
                 except json.JSONDecodeError:
                     continue
+    except httpx.TimeoutException as e:
+        raise GeminiError("Gemini timed out while generating a response. Please try again.") from e
+    except httpx.HTTPError as e:
+        raise GeminiError(f"Network error while connecting to Gemini: {str(e)}") from e
 
 
 async def _stream_huggingface_chat(
@@ -328,9 +343,20 @@ async def stream_chat_completion(
     # 1. Explicit OpenRouter / Ask AI Efficient request
     if req_provider in ("openrouter", "efficient") or req_model.startswith("openrouter/") or (req_model and "/" in req_model):
         if openrouter_key:
-            async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt, model=req_model or None):
-                yield chunk
-            return
+            has_yielded = False
+            try:
+                async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt, model=req_model or None):
+                    has_yielded = True
+                    yield chunk
+                return
+            except (GeminiError, httpx.TimeoutException, httpx.HTTPError) as e:
+                if not has_yielded and (gemini_key or generic_key):
+                    fallback_k = gemini_key or generic_key
+                    print(f"[Fallback] OpenRouter failed ({e}), seamlessly falling back to Gemini...")
+                    async for chunk in _stream_gemini(fallback_k, messages, system_prompt=system_prompt):
+                        yield chunk
+                    return
+                raise
         elif not gemini_key and not generic_key:
             raise GeminiError("OpenRouter API key is not configured. Please add OPENROUTER_API_KEY in backend .env.")
 
@@ -338,17 +364,38 @@ async def stream_chat_completion(
     if req_provider == "gemini" or req_model.startswith("gemini"):
         key = gemini_key or generic_key
         if key:
-            async for chunk in _stream_gemini(key, messages, system_prompt=system_prompt, model=req_model or None):
-                yield chunk
-            return
+            has_yielded = False
+            try:
+                async for chunk in _stream_gemini(key, messages, system_prompt=system_prompt, model=req_model or None):
+                    has_yielded = True
+                    yield chunk
+                return
+            except (GeminiError, httpx.TimeoutException, httpx.HTTPError) as e:
+                if not has_yielded and openrouter_key:
+                    print(f"[Fallback] Gemini failed ({e}), seamlessly falling back to OpenRouter...")
+                    async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt):
+                        yield chunk
+                    return
+                raise
         elif not openrouter_key:
             raise GeminiError("Gemini API key is not configured. Please add GEMINI_API_KEY in backend .env.")
 
     # 3. OpenRouter provider (default efficient provider)
     if openrouter_key and req_provider != "gemini":
-        async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt, model=req_model or None):
-            yield chunk
-        return
+        has_yielded = False
+        try:
+            async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt, model=req_model or None):
+                has_yielded = True
+                yield chunk
+            return
+        except (GeminiError, httpx.TimeoutException, httpx.HTTPError) as e:
+            if not has_yielded and (gemini_key or generic_key):
+                fallback_k = gemini_key or generic_key
+                print(f"[Fallback] OpenRouter failed ({e}), seamlessly falling back to Gemini...")
+                async for chunk in _stream_gemini(fallback_k, messages, system_prompt=system_prompt):
+                    yield chunk
+                return
+            raise
 
     # 5. Gemini / Default provider fallback
     key = gemini_key or generic_key
@@ -359,10 +406,30 @@ async def stream_chat_completion(
 
     # If the key has the OpenRouter prefix sk-or-, route to OpenRouter
     if key.startswith("sk-or-"):
-        async for chunk in _stream_openrouter(key, messages, system_prompt=system_prompt, model=req_model or None):
-            yield chunk
+        has_yielded = False
+        try:
+            async for chunk in _stream_openrouter(key, messages, system_prompt=system_prompt, model=req_model or None):
+                has_yielded = True
+                yield chunk
+        except (GeminiError, httpx.TimeoutException, httpx.HTTPError) as e:
+            if not has_yielded and gemini_key:
+                print(f"[Fallback] OpenRouter failed ({e}), falling back to Gemini...")
+                async for chunk in _stream_gemini(gemini_key, messages, system_prompt=system_prompt):
+                    yield chunk
+            else:
+                raise
     else:
-        async for chunk in _stream_gemini(key, messages, system_prompt=system_prompt, model=req_model or None):
-            yield chunk
+        has_yielded = False
+        try:
+            async for chunk in _stream_gemini(key, messages, system_prompt=system_prompt, model=req_model or None):
+                has_yielded = True
+                yield chunk
+        except (GeminiError, httpx.TimeoutException, httpx.HTTPError) as e:
+            if not has_yielded and openrouter_key:
+                print(f"[Fallback] Gemini failed ({e}), falling back to OpenRouter...")
+                async for chunk in _stream_openrouter(openrouter_key, messages, system_prompt=system_prompt):
+                    yield chunk
+            else:
+                raise
 
 

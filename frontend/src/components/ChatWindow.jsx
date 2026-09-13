@@ -77,6 +77,7 @@ export default function ChatWindow({
   onSpeak,
   onStopSpeech,
   onRetry,
+  onEdit,
 }) {
   const containerRef = useRef(null);
   const isAtBottomRef = useRef(true);
@@ -88,29 +89,21 @@ export default function ChatWindow({
     const container = containerRef.current;
     if (!container) return;
     const threshold = 160; // px threshold from bottom
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-    isAtBottomRef.current = distanceFromBottom <= threshold;
+    const isCloseToBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
+    isAtBottomRef.current = isCloseToBottom;
   };
 
+  // Auto-scroll on new tokens or messages only if user was already at the bottom
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const messageCountChanged = messages.length !== prevMessagesCountRef.current;
+    const hasNewMessage = messages.length > prevMessagesCountRef.current;
+    const isNewStream = streamingId && !prevStreamingIdRef.current;
     prevMessagesCountRef.current = messages.length;
     prevStreamingIdRef.current = streamingId;
 
-    // When a new message is added, immediately jump to bottom without smooth animation
-    // to prevent conflicting with incoming streaming tokens
-    if (messageCountChanged) {
-      isAtBottomRef.current = true;
-      container.scrollTop = container.scrollHeight;
-      return;
-    }
-
-    // Keep view anchored to bottom if user has not scrolled up
-    if (isAtBottomRef.current) {
+    if (hasNewMessage || isNewStream || isAtBottomRef.current) {
       container.scrollTop = container.scrollHeight;
     }
   }, [messages, streamingId]);
@@ -140,21 +133,34 @@ export default function ChatWindow({
 
   return (
     <div className="chat-window" ref={containerRef} onScroll={handleScroll}>
-      {messages.map((m) => (
-        <MessageBubble
-          key={m.id}
-          id={m.id}
-          role={m.role}
-          content={m.content}
-          attachments={m.attachments}
-          isStreaming={m.id === streamingId}
-          user={user}
-          isSpeaking={m.id === speakingMessageId}
-          onSpeak={onSpeak}
-          onStopSpeech={onStopSpeech}
-          onRetry={onRetry}
-        />
-      ))}
+      {messages.map((m, idx) => {
+        const prevUserMsg = m.role === "assistant"
+          ? messages.slice(0, idx).reverse().find((item) => item.role === "user")
+          : null;
+        const userPrompt = m.userPrompt || (prevUserMsg ? (prevUserMsg.content || "") : "");
+
+        return (
+          <MessageBubble
+            key={m.id}
+            id={m.id}
+            role={m.role}
+            content={m.content}
+            attachments={m.attachments}
+            sources={m.sources}
+            searchStatus={m.searchStatus}
+            webSearch={m.webSearch}
+            isStreaming={m.id === streamingId}
+            isAnyStreaming={Boolean(streamingId)}
+            user={user}
+            isSpeaking={m.id === speakingMessageId}
+            onSpeak={onSpeak}
+            onStopSpeech={onStopSpeech}
+            onRetry={onRetry}
+            onEdit={onEdit}
+            userPrompt={userPrompt}
+          />
+        );
+      })}
       <div className="scroll-bottom-anchor" />
     </div>
   );

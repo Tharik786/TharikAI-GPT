@@ -142,6 +142,7 @@ export default function App() {
       id: `stream-${Date.now()}`,
       role: "assistant",
       content: "",
+      userPrompt: text || "",
     };
 
     let working = [...messages, userMsg, assistantMsg];
@@ -316,37 +317,158 @@ export default function App() {
     setSpeechRate(nextSpeed);
   };
 
-  const handleRetry = async (assistantMessageId) => {
+  const handleRetry = async (messageId) => {
     if (streamingId) return;
     stopSpeech();
     setError(null);
 
     const convId = ensureConversation();
-    const msgIdx = messages.findIndex((m) => m.id === assistantMessageId);
+    const msgIdx = messages.findIndex((m) => m.id === messageId);
     if (msgIdx === -1) return;
 
-    const historyUpToAssistant = messages.slice(0, msgIdx);
+    const targetMsg = messages[msgIdx];
+    // If user clicked retry on a user question: keep conversation up to and including that user question!
+    // If user clicked retry on an assistant answer: keep conversation up to that assistant answer!
+    const historyToKeep = targetMsg.role === "user"
+      ? messages.slice(0, msgIdx + 1)
+      : messages.slice(0, msgIdx);
+
+    if (historyToKeep.length === 0) return;
+
     const newAssistantMsg = {
       id: `stream-${Date.now()}`,
       role: "assistant",
       content: "",
     };
 
-    let working = [...historyUpToAssistant, newAssistantMsg];
+    let working = [...historyToKeep, newAssistantMsg];
     setMessages(working);
     setStreamingId(newAssistantMsg.id);
 
-    const historyForLLM = historyUpToAssistant.map((m) => {
-      if (m.attachments && m.attachments.length > 0 && !m.content.includes("--- Document Attached:")) {
-        let full = m.content;
+    const historyForLLM = historyToKeep.map((m) => {
+      let full = m.content || "";
+      if (m.attachments && m.attachments.length > 0 && !full.includes("--- Document Attached:")) {
         m.attachments.forEach((att) => {
-          if (att.textContent) {
-            full += `\n\n--- Document Attached: ${att.name} ---\n${att.textContent}\n--- End of Document ---`;
+          if (att.isImage) {
+            full += `\n\n[Attached image: ${att.name}]`;
+          } else if (att.textContent) {
+            const pageInfo = att.pageCount ? ` (${att.pageCount} pages)` : "";
+            full += `\n\n--- Document Attached: ${att.name}${pageInfo} ---\n${att.textContent}\n--- End of Document ---`;
           }
         });
-        return { role: m.role, content: full };
       }
-      return { role: m.role, content: m.content };
+      return {
+        role: m.role,
+        content: full,
+        images: m.images || [],
+      };
+    });
+
+    let pendingDeltas = "";
+    let rafId = null;
+
+    const flushDeltas = () => {
+      if (!pendingDeltas) return;
+      const textToAppend = pendingDeltas;
+      pendingDeltas = "";
+      working = working.map((m) =>
+        m.id === newAssistantMsg.id ? { ...m, content: m.content + textToAppend } : m
+      );
+      setMessages(working);
+    };
+
+    await streamChat(
+      historyForLLM,
+      {
+        onDelta: (delta) => {
+          pendingDeltas += delta;
+          const currentAssistantMsg = working.find((m) => m.id === newAssistantMsg.id);
+          if (!currentAssistantMsg || !currentAssistantMsg.content) {
+            flushDeltas();
+            return;
+          }
+          if (!rafId) {
+            rafId = requestAnimationFrame(() => {
+              rafId = null;
+              flushDeltas();
+            });
+          }
+        },
+        onDone: () => {
+          if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+          flushDeltas();
+          setStreamingId(null);
+          storage.setMessages(convId, working);
+          setConversations(storage.list());
+          if (user?.email) {
+            const updatedConv = storage.get(convId);
+            if (updatedConv) {
+              syncConversationRemote(updatedConv, user.email);
+              syncMessagesRemote(convId, working, updatedConv.updatedAt);
+            }
+          }
+        },
+        onError: (msg) => {
+          if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+          flushDeltas();
+          setError(msg);
+          setStreamingId(null);
+          storage.setMessages(convId, working);
+          setConversations(storage.list());
+        },
+      },
+      {
+        email: user?.email,
+      }
+    );
+  };
+
+  const handleEditMessage = async (messageId, newText) => {
+    if (streamingId) return;
+    stopSpeech();
+    setError(null);
+
+    const convId = ensureConversation();
+    const msgIdx = messages.findIndex((m) => m.id === messageId);
+    if (msgIdx === -1) return;
+
+    const targetMsg = messages[msgIdx];
+    const updatedTargetMsg = { ...targetMsg, content: newText };
+    const historyToKeep = [...messages.slice(0, msgIdx), updatedTargetMsg];
+
+    const newAssistantMsg = {
+      id: `stream-${Date.now()}`,
+      role: "assistant",
+      content: "",
+    };
+
+    let working = [...historyToKeep, newAssistantMsg];
+    setMessages(working);
+    setStreamingId(newAssistantMsg.id);
+
+    const historyForLLM = historyToKeep.map((m) => {
+      let full = m.content || "";
+      if (m.attachments && m.attachments.length > 0 && !full.includes("--- Document Attached:")) {
+        m.attachments.forEach((att) => {
+          if (att.isImage) {
+            full += `\n\n[Attached image: ${att.name}]`;
+          } else if (att.textContent) {
+            const pageInfo = att.pageCount ? ` (${att.pageCount} pages)` : "";
+            full += `\n\n--- Document Attached: ${att.name}${pageInfo} ---\n${att.textContent}\n--- End of Document ---`;
+          }
+        });
+      }
+      return {
+        role: m.role,
+        content: full,
+        images: m.images || [],
+      };
     });
 
     let pendingDeltas = "";
@@ -463,6 +585,7 @@ export default function App() {
           onSpeak={handleSpeakMessage}
           onStopSpeech={handleStopSpeech}
           onRetry={handleRetry}
+          onEdit={handleEditMessage}
         />
 
         {/* Floating Audio Speech Controller Bar */}
