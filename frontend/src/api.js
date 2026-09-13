@@ -1,7 +1,8 @@
 const RAW_URL = import.meta.env.VITE_API_URL;
-// When VITE_API_URL is empty or not provided, default to "" (relative URL) so frontend works
-// seamlessly with both FastAPI same-origin serving (port 8000) and Vite dev server proxy (port 5173).
-const BASE_URL = RAW_URL ? RAW_URL.trim().replace(/\/+$/, "") : "";
+// In dev, use "" so Vite dev proxy forwards to local backend.
+// In production (Netlify), default to deployed Render URL if VITE_API_URL is not provided.
+const DEFAULT_URL = import.meta.env.DEV ? "" : "https://tharikai-gpt.onrender.com";
+const BASE_URL = RAW_URL && RAW_URL.trim() ? RAW_URL.trim().replace(/\/+$/, "") : DEFAULT_URL;
 
 /**
  * Streams an assistant reply for the given message history via SSE.
@@ -29,7 +30,12 @@ export async function streamChat(
   }
 
   if (!res.ok || !res.body) {
-    onError((await res.text().catch(() => "")) || "Failed to reach the server.");
+    const errorText = (await res.text().catch(() => "")).trim();
+    if (errorText.startsWith("<") || errorText.includes("<!DOCTYPE") || errorText.includes("<!doctype")) {
+      onError(`Backend error (${res.status}): Server is temporarily unavailable or restarting. Please try again in a few seconds.`);
+    } else {
+      onError(errorText || `Failed to reach the server (HTTP ${res.status}).`);
+    }
     return;
   }
 

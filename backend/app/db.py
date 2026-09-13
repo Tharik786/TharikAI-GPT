@@ -222,7 +222,11 @@ def save_conversation(conv_id: str, email: str, title: str, created_at: int, upd
         con.close()
 
 
-def set_messages(conv_id: str, messages: list, updated_at: int):
+def set_messages(conv_id: str, messages: list, updated_at: int | None = None):
+    if not updated_at:
+        import time
+        updated_at = int(time.time() * 1000)
+
     con = get_db_connection()
     try:
         # Update updated_at of conversation
@@ -234,20 +238,27 @@ def set_messages(conv_id: str, messages: list, updated_at: int):
         # Delete existing messages and insert new
         con.run("DELETE FROM public.messages WHERE conversation_id = :id", id=conv_id)
         for idx, m in enumerate(messages):
-            msg_id = m.get("id") or f"{conv_id}-{idx}"
-            role = m.get("role", "user")
-            content = m.get("content", "")
-            created_at = m.get("createdAt") or (updated_at + idx)
+            if isinstance(m, dict):
+                msg_id = m.get("id") or f"{conv_id}-{idx}"
+                role = m.get("role") or "user"
+                content = m.get("content") or ""
+                created_at = m.get("createdAt") or (updated_at + idx)
+            else:
+                msg_id = getattr(m, "id", None) or f"{conv_id}-{idx}"
+                role = getattr(m, "role", "user")
+                content = getattr(m, "content", "")
+                created_at = getattr(m, "createdAt", None) or (updated_at + idx)
+
             con.run(
                 """
                 INSERT INTO public.messages (id, conversation_id, role, content, created_at)
                 VALUES (:id, :conv_id, :role, :content, :created_at)
                 """,
-                id=msg_id,
+                id=str(msg_id),
                 conv_id=conv_id,
-                role=role,
-                content=content,
-                created_at=created_at,
+                role=str(role),
+                content=str(content),
+                created_at=int(created_at),
             )
     finally:
         con.close()

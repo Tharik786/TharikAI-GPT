@@ -570,7 +570,8 @@ async def create_or_update_conversation(body: ConversationBody):
 
 @app.post("/api/conversations/messages")
 async def update_conversation_messages(body: MessagesBody):
-    db_set_messages(body.id, body.messages, body.updatedAt)
+    messages_data = [m.model_dump() for m in body.messages]
+    db_set_messages(body.id, messages_data, body.updatedAt)
     return {"success": True}
 
 
