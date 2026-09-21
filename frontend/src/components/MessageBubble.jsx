@@ -3,7 +3,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { generateImageRemote } from "../api.js";
 import {
   exportToWordDoc,
   exportTableToExcel,
@@ -453,284 +452,6 @@ function downloadSnippet(filename, content) {
   setTimeout(() => window.URL.revokeObjectURL(url), 1000);
 }
 
-const GeneratedImageCard = React.memo(function GeneratedImageCard({ src, alt, ...props }) {
-  const [imageSrc, setImageSrc] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [isRegenerating, setIsRegenerating] = useState(false);
-
-  // Keep track of the active Object URL to properly revoke it
-  const activeBlobUrlRef = useRef(null);
-  const isMountedRef = useRef(true);
-
-  // Helper to safely revoke old object URL
-  const revokeActiveBlobUrl = () => {
-    if (activeBlobUrlRef.current) {
-      URL.revokeObjectURL(activeBlobUrlRef.current);
-      activeBlobUrlRef.current = null;
-    }
-  };
-
-  // Extract visual prompt from alt or src query parameters
-  const promptText = useMemo(() => {
-    if (alt && alt !== "AI Generated Artwork" && !alt.startsWith("http")) {
-      return alt;
-    }
-    if (src && typeof src === "string") {
-      try {
-        const urlObj = new URL(src, window.location.origin);
-        const p = urlObj.searchParams.get("prompt");
-        if (p) return p;
-      } catch {
-        // ignore
-      }
-    }
-    return alt || "AI Generated Artwork";
-  }, [alt, src]);
-
-  // Load or generate image via Cloudflare image API (Blob -> Object URL)
-  const fetchImage = async (promptToUse, isRegen = false) => {
-    if (!promptToUse || !promptToUse.trim()) return;
-
-    if (isRegen) {
-      setIsRegenerating(true);
-    } else {
-      setLoading(true);
-    }
-    setError(null);
-
-    try {
-      // 1-8. Query server-side API key proxy, read response.blob(), verify image/*, create URL.createObjectURL(blob)
-      const { objectUrl } = await generateImageRemote(promptToUse.trim());
-
-      if (!isMountedRef.current) {
-        URL.revokeObjectURL(objectUrl);
-        return;
-      }
-
-      // 10. Revoke previous object URL before replacing
-      revokeActiveBlobUrl();
-      activeBlobUrlRef.current = objectUrl;
-      setImageSrc(objectUrl);
-      setError(null);
-    } catch (err) {
-      if (isMountedRef.current) {
-        setError(err.message || "Unable to render image");
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setLoading(false);
-        setIsRegenerating(false);
-      }
-    }
-  };
-
-  useEffect(() => {
-    isMountedRef.current = true;
-
-    if (!src) {
-      if (alt) {
-        fetchImage(alt);
-      }
-      return;
-    }
-
-    const s = typeof src === "string" ? src.trim() : "";
-
-    // If src points to our image generation endpoint or is a relative image route
-    if (s.startsWith("/api/image") || s.includes("/api/image?")) {
-      const p = promptText || alt;
-      fetchImage(p);
-    } else if (s.startsWith("blob:") || s.startsWith("data:image/") || s.startsWith("http://") || s.startsWith("https://")) {
-      // Direct blob / data / external URL
-      revokeActiveBlobUrl();
-      setImageSrc(s);
-      setLoading(false);
-      setError(null);
-    } else {
-      // Treat raw string as prompt
-      fetchImage(s);
-    }
-
-    // 10. Revoke object URL on unmount
-    return () => {
-      isMountedRef.current = false;
-      revokeActiveBlobUrl();
-    };
-  }, [src, promptText]);
-
-  const handleRegenerate = (e) => {
-    if (e) e.stopPropagation();
-    if (loading || isRegenerating) return;
-    fetchImage(promptText, true);
-  };
-
-  const handleDownload = async (e) => {
-    if (e) e.stopPropagation();
-    const downloadSrc = imageSrc || activeBlobUrlRef.current;
-    if (!downloadSrc) return;
-
-    try {
-      const filename = `${(promptText || "ai-image").slice(0, 32).replace(/[^a-zA-Z0-9_-]/g, "_")}.png`;
-      const a = document.createElement("a");
-      a.href = downloadSrc;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } catch {
-      window.open(downloadSrc, "_blank");
-    }
-  };
-
-  const isWorking = loading || isRegenerating;
-
-  return (
-    <div className="generated-image-card">
-      <div
-        className={`generated-image-container ${isWorking ? "is-loading" : "is-ready"}`}
-        onClick={() => {
-          if (imageSrc && !isWorking && !error) {
-            setModalOpen(true);
-          }
-        }}
-      >
-        {isWorking && (
-          <div className="image-loading-skeleton">
-            <span className="image-skeleton-spinner" />
-            <span>{isRegenerating ? "Regenerating artwork..." : "Generating artwork with AI..."}</span>
-          </div>
-        )}
-
-        {error && !isWorking && (
-          <div className="image-error-state" onClick={(e) => e.stopPropagation()}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            <div className="image-error-title" style={{ fontWeight: 600, fontSize: "14px", color: "#f87171" }}>
-              Unable to generate image
-            </div>
-            <div className="image-error-msg">{error}</div>
-            <button
-              type="button"
-              className="image-retry-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                fetchImage(promptText);
-              }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="1 4 1 10 7 10" />
-                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-              </svg>
-              <span>Retry Generation</span>
-            </button>
-          </div>
-        )}
-
-        {imageSrc && !error && (
-          <img
-            src={imageSrc}
-            alt={promptText}
-            className={`generated-ai-img ${isWorking ? "is-loading" : "is-loaded"}`}
-            loading="eager"
-            decoding="async"
-            {...props}
-          />
-        )}
-
-        {imageSrc && !isWorking && !error && (
-          <div className="image-overlay-actions">
-            {/* 16. Regenerate button using same prompt */}
-            <button
-              type="button"
-              className="image-action-btn"
-              onClick={handleRegenerate}
-              title="Regenerate artwork using same prompt"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="1 4 1 10 7 10" />
-                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-              </svg>
-              <span>Regenerate</span>
-            </button>
-
-            {/* 15. Download PNG button */}
-            <button
-              type="button"
-              className="image-action-btn"
-              onClick={handleDownload}
-              title="Download generated PNG"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              <span>Download</span>
-            </button>
-
-            {/* Lightbox trigger */}
-            <button
-              type="button"
-              className="image-action-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                setModalOpen(true);
-              }}
-              title="View full size in lightbox"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                <polyline points="15 3 21 3 21 9" />
-                <line x1="10" y1="14" x2="21" y2="3" />
-              </svg>
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Full screen Lightbox preview modal */}
-      {modalOpen && imageSrc && (
-        <div className="image-lightbox-overlay" onClick={() => setModalOpen(false)}>
-          <div className="image-lightbox-content" onClick={(e) => e.stopPropagation()}>
-            <img src={imageSrc} alt={promptText} className="lightbox-img" />
-            <button
-              type="button"
-              className="lightbox-close-btn"
-              onClick={() => setModalOpen(false)}
-            >
-              &times;
-            </button>
-            <div style={{ display: "flex", gap: "10px", marginTop: "12px", flexWrap: "wrap", justifyContent: "center" }}>
-              <button
-                type="button"
-                className="lightbox-download-btn"
-                onClick={handleDownload}
-              >
-                Download Full HD PNG
-              </button>
-              <button
-                type="button"
-                className="lightbox-download-btn"
-                style={{ background: "rgba(255, 255, 255, 0.16)", border: "1px solid rgba(255, 255, 255, 0.28)" }}
-                onClick={(e) => {
-                  setModalOpen(false);
-                  handleRegenerate(e);
-                }}
-              >
-                Regenerate Artwork
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-});
 
 const TableWrapper = ({ children, ...props }) => {
   return (
@@ -767,10 +488,20 @@ const MarkdownLink = ({ href, children, ...props }) => {
   );
 };
 
+const MarkdownImage = ({ src, alt, ...props }) => (
+  <img
+    src={src}
+    alt={alt || ""}
+    loading="lazy"
+    style={{ maxWidth: "100%", borderRadius: "8px", margin: "8px 0" }}
+    {...props}
+  />
+);
+
 const MARKDOWN_COMPONENTS = {
   code: CodeBlock,
   table: TableWrapper,
-  img: GeneratedImageCard,
+  img: MarkdownImage,
   a: MarkdownLink,
 };
 
@@ -796,7 +527,6 @@ function MessageBubble({
   const isUser = role === "user";
   const userInitial = getUserInitial(user);
   const [copied, setCopied] = useState(false);
-  const [shared, setShared] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(content || "");
   const [detailsExpanded, setDetailsExpanded] = useState(false);
@@ -805,10 +535,7 @@ function MessageBubble({
   // For assistant messages, skip expensive document parsing regexes during streaming
   const { cleanText, attachments } = useMemo(() => {
     if (!isUser) {
-      let text = content || "";
-      // Strip any "Here is your generated image of...:" intro line
-      text = text.replace(/^Here is your generated image of(?:\s+\*\*[^*]+\*\*|\s+[^:\n]+)?:\s*/i, "").trim();
-      return { cleanText: text, attachments: [] };
+      return { cleanText: (content || "").trim(), attachments: [] };
     }
     return parseMessageContent(content, propAttachments);
   }, [isUser, content, propAttachments]);
@@ -853,28 +580,6 @@ function MessageBubble({
     }
   };
 
-  const handleShare = async () => {
-    const textToShare = cleanText || content || "";
-    if (!textToShare) return;
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: "Question from TharikAI",
-          text: textToShare,
-        });
-      } catch (err) {
-        if (err.name !== "AbortError") {
-          fallbackCopy(textToShare);
-          setShared(true);
-          setTimeout(() => setShared(false), 1600);
-        }
-      }
-    } else {
-      fallbackCopy(textToShare);
-      setShared(true);
-      setTimeout(() => setShared(false), 1600);
-    }
-  };
 
   const handleStartEdit = () => {
     setEditText(cleanText || content || "");
@@ -1124,7 +829,7 @@ function MessageBubble({
             )}
           </div>
 
-          {/* User Message Actions: 1) History/Retry, 2) Copy, 3) Share, 4) Edit */}
+          {/* User Message Actions: 1) History/Retry, 2) Copy, 3) Edit */}
           {!isEditing && (cleanText || content || (attachments && attachments.length > 0)) && (
             <div className="message-actions-bar user-actions-bar">
               {/* 1. Retry / History with Clock */}
@@ -1165,28 +870,7 @@ function MessageBubble({
                 )}
               </button>
 
-              {/* 3. Share (Tray with upward arrow) */}
-              <button
-                type="button"
-                className="msg-action-btn msg-share-btn"
-                onClick={handleShare}
-                title={shared ? "Copied to share!" : "Share question"}
-                aria-label="Share question"
-              >
-                {shared ? (
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10a37f" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                ) : (
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
-                    <polyline points="16 6 12 2 8 6" />
-                    <line x1="12" y1="2" x2="12" y2="15" />
-                  </svg>
-                )}
-              </button>
-
-              {/* 4. Edit (Angled pencil) */}
+              {/* 3. Edit (Angled pencil) */}
               <button
                 type="button"
                 className="msg-action-btn msg-edit-btn"
@@ -1205,8 +889,7 @@ function MessageBubble({
         </div>
       ) : (
         <div
-          className={`message-bubble bubble-assistant ${isStreaming ? "is-streaming" : ""
-            } ${isSpeaking ? "bubble-speaking" : ""}`}
+          className={`message-bubble bubble-assistant ${isStreaming ? "is-streaming" : ""}`}
         >
           {/* Render document attachment cards above or below the message text */}
           {attachments && attachments.length > 0 && (
@@ -1450,11 +1133,6 @@ function MessageBubble({
             )
           )}
 
-          {isStreaming && cleanText && (
-            <span className="streaming-dot-indicator" aria-hidden="true">
-              <span className="streaming-dot-pulse" />
-            </span>
-          )}
 
           {/* Assistant Message Actions (Read aloud TTS, Copy, Export, Retry - Icons Only) */}
           {!isStreaming && (cleanText || onRetry) && (

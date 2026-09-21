@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 
 function getFirstName(user) {
   if (!user) return "";
@@ -101,22 +101,6 @@ export default function Sidebar({
               <PlusIcon />
             </button>
 
-            <div className="mini-section-label">CHATS</div>
-
-            {/* Collapsed Chat Icon buttons */}
-            <div className="mini-conversation-list">
-              {conversations.slice(0, 10).map((conv) => (
-                <button
-                  key={conv.id}
-                  className={`mini-chat-icon-btn ${conv.id === activeId ? "active" : ""}`}
-                  onClick={() => onSelect(conv.id)}
-                  title={conv.title || "Chat"}
-                  aria-label={conv.title || "Chat"}
-                >
-                  <MessageIcon />
-                </button>
-              ))}
-            </div>
 
             {/* Collapsed Bottom User Avatar */}
             <div className="sidebar-mini-footer">
@@ -200,9 +184,6 @@ export default function Sidebar({
                     className={`conversation-item ${conv.id === activeId ? "active" : ""}`}
                     onClick={() => onSelect(conv.id)}
                   >
-                    <span className="conv-icon">
-                      <MessageIcon />
-                    </span>
 
                     {editingId === conv.id ? (
                       <input
@@ -343,13 +324,6 @@ function ExpandRightIcon() {
   );
 }
 
-function MessageIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
-  );
-}
 
 function UserIcon() {
   return (

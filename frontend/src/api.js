@@ -164,53 +164,6 @@ export async function extractDocumentRemote(file) {
   return data;
 }
 
-export async function generateImageRemote(prompt) {
-  const cleanPrompt = (prompt || "").trim();
-  if (!cleanPrompt) {
-    throw new Error("Prompt cannot be empty");
-  }
-
-  const res = await fetch(`${BASE_URL}/api/image`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ prompt: cleanPrompt }),
-  });
-
-  if (!res.ok) {
-    let errorDetail = "";
-    const contentType = res.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
-      const errJson = await res.json().catch(() => ({}));
-      errorDetail = errJson.detail || errJson.error || errJson.message || JSON.stringify(errJson);
-    } else {
-      errorDetail = await res.text().catch(() => "");
-    }
-
-    if (res.status === 401) {
-      throw new Error(`Authentication failed (401): ${errorDetail || "Invalid or missing API key."}`);
-    } else if (res.status === 403) {
-      throw new Error(`Access forbidden (403): ${errorDetail || "Insufficient permissions."}`);
-    } else if (res.status === 429) {
-      throw new Error(`Rate limit exceeded (429): ${errorDetail || "Too many requests. Please wait a moment."}`);
-    } else if (res.status >= 500) {
-      throw new Error(`AI Image Generation error (${res.status}): ${errorDetail || "Internal server error."}`);
-    } else {
-      throw new Error(`Image generation failed (${res.status}): ${errorDetail || res.statusText}`);
-    }
-  }
-
-  const contentType = res.headers.get("content-type") || "";
-  if (!contentType.startsWith("image/")) {
-    const textSample = await res.text().catch(() => "");
-    throw new Error(`Expected image binary response but received '${contentType}': ${textSample.slice(0, 120)}`);
-  }
-
-  const blob = await res.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  return { objectUrl, blob, prompt: cleanPrompt };
-}
 
 /**
  * Generates an executive document using Carbone.io API via backend.

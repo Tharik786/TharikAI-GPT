@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect } from "react";
 import { extractFileContent } from "../utils/documentExtractor.js";
 import { cleanRecognizedSpeech } from "../utils/speechService.js";
 

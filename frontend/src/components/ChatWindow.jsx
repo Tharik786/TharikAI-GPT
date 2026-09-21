@@ -1,12 +1,12 @@
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import MessageBubble from "./MessageBubble.jsx";
 
 const SUGGESTION_CARDS = [
   {
-    icon: "🎨",
-    title: "Generate an image",
-    desc: "Create AI art & photos",
-    prompt: "Generate an image of a futuristic cyberpunk city with neon reflections in rain",
+    icon: "📄",
+    title: "Create a document",
+    desc: "Word, Excel, PPT & PDF",
+    prompt: "Create a comprehensive analysis and report on artificial intelligence trends",
   },
   {
     icon: "🌐",
@@ -17,8 +17,8 @@ const SUGGESTION_CARDS = [
   {
     icon: "✨",
     title: "Create something",
-    desc: "Ideas, writing & designs",
-    prompt: "Help me create something creative and innovative.",
+    desc: "Ideas & creative writing",
+    prompt: "Help me brainstorm innovative ideas and strategies.",
   },
   {
     icon: "💻",

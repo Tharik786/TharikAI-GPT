@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "docx": "^9.7.1",
     "jspdf": "^4.2.1",
     "jszip": "^3.10.1",
     "pdfjs-dist": "^5.4.624",

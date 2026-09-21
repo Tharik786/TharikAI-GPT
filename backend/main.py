@@ -32,7 +32,6 @@ load_dotenv()
 
 
 import io
-import time
 import socket
 import shutil
 import subprocess
@@ -46,13 +45,8 @@ from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.llmModel import stream_chat_completion, GeminiError
+from app.llmModel import stream_chat_completion, LLMProviderError
 from app.webService import should_perform_web_search, perform_web_search
-from app.imageGenerator import (
-    detect_image_prompt,
-    generate_image_bytes,
-    generate_ai_image,
-)
 from app.docGenerator import (
     render_carbone_document,
     fetch_rendered_file,
@@ -146,7 +140,7 @@ async def lifespan(app: FastAPI):
                             cwd=str(frontend_path),
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
-                            shell=(sys.platform == "win32"),
+                            shell=False,
                         )
                         print(f"[Auto-Runner] Frontend dev server started (PID: {frontend_process.pid}) at {VITE_DEV_URL}")
                     except Exception as e:
@@ -212,7 +206,30 @@ async def render_frontend_or_spa(full_path: str, request: Request):
     if clean_path.startswith("api/") or clean_path == "api" or clean_path in ("docs", "redoc", "openapi.json"):
         raise HTTPException(status_code=404, detail="Not Found")
 
-    # 1. First priority: Check if static dist directory exists (pre-bundled production assets)
+    # In development, use the live Vite server so source changes are visible at the backend URL.
+    if not os.getenv("RENDER") and not os.getenv("PRODUCTION") and is_vite_dev_server_running():
+        target_url = f"{VITE_DEV_URL}/{clean_path}"
+        if request.url.query:
+            target_url += f"?{request.url.query}"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(target_url, timeout=10.0, follow_redirects=True)
+                content_type = resp.headers.get("content-type", "text/html")
+                headers = {
+                    k: v
+                    for k, v in resp.headers.items()
+                    if k.lower() not in ("content-length", "content-encoding", "transfer-encoding", "connection")
+                }
+                return Response(
+                    content=resp.content,
+                    status_code=resp.status_code,
+                    media_type=content_type,
+                    headers=headers,
+                )
+        except Exception:
+            pass
+
+    # Check if static dist directory exists (pre-bundled production assets)
     dist_root = get_frontend_dist_dir()
     if dist_root and dist_root.exists():
         if clean_path:
@@ -231,7 +248,7 @@ async def render_frontend_or_spa(full_path: str, request: Request):
                 headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
             )
 
-    # 2. Second priority: If dist is not yet built, proxy to Vite dev server on port 5173
+    # If dist is not yet built, proxy to Vite dev server on port 5173
     if is_vite_dev_server_running():
         target_url = f"{VITE_DEV_URL}/{clean_path}"
         if request.url.query:
@@ -310,84 +327,6 @@ class MessagesBody(BaseModel):
     updatedAt: int | None = None
 
 
-class ImageBody(BaseModel):
-    prompt: str
-    aspect_ratio: str | None = "auto"
-    resolution: str | None = "1K"
-    background: str | None = "auto"
-
-
-@app.post("/api/image")
-async def image_endpoint(body: ImageBody):
-    """
-    Direct AI image generation endpoint using FLUX.1 (with SDXL Turbo fallback).
-    Returns RAW image binary bytes (PNG/JPEG) for frontend <img> and Blob display.
-    """
-    if not body.prompt or not body.prompt.strip():
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-
-    raw_bytes, content_type = await generate_image_bytes(
-        prompt=body.prompt.strip(),
-        aspect_ratio=body.aspect_ratio or "auto",
-        resolution=body.resolution or "1K",
-        background=body.background or "auto",
-    )
-    return Response(
-        content=raw_bytes,
-        media_type=content_type,
-        headers={
-            "Cache-Control": "public, max-age=86400",
-            "Content-Type": content_type,
-            "Content-Disposition": f'inline; filename="image_{int(time.time())}.png"',
-        },
-    )
-
-
-@app.get("/api/image")
-async def image_get_endpoint(
-    prompt: str,
-    aspect_ratio: str = "auto",
-    resolution: str = "1K",
-    background: str = "auto",
-):
-    """
-    Direct AI image generation GET endpoint returning RAW image binary data.
-    Allows markdown ![alt](/api/image?prompt=...) to directly render in browsers.
-    """
-    if not prompt or not prompt.strip():
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-
-    raw_bytes, content_type = await generate_image_bytes(
-        prompt=prompt.strip(),
-        aspect_ratio=aspect_ratio,
-        resolution=resolution,
-        background=background,
-    )
-    return Response(
-        content=raw_bytes,
-        media_type=content_type,
-        headers={
-            "Cache-Control": "public, max-age=86400",
-            "Content-Type": content_type,
-            "Content-Disposition": f'inline; filename="image_{int(time.time())}.png"',
-        },
-    )
-
-
-@app.post("/api/generate-image")
-async def generate_image_json_endpoint(body: ImageBody):
-    """
-    Returns structured JSON with the public image URL, task ID, prompt, and provider metadata.
-    """
-    if not body.prompt or not body.prompt.strip():
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-
-    return await generate_ai_image(
-        prompt=body.prompt.strip(),
-        aspect_ratio=body.aspect_ratio or "auto",
-        resolution=body.resolution or "1K",
-        background=body.background or "auto",
-    )
 
 
 # ============================================================
@@ -662,21 +601,6 @@ async def chat(body: ChatBody):
             latest_user_text = m.get("content", "")
             break
 
-    # Detect if user query is requesting image generation
-    image_prompt = detect_image_prompt(latest_user_text)
-    if image_prompt:
-        async def image_event_stream():
-            yield f"data: {json.dumps({'type': 'search_status', 'status': f'🎨 Creating high-definition image with FLUX.1 for \"{image_prompt[:45]}\"...'})}\n\n"
-            encoded_prompt = urllib.parse.quote(image_prompt)
-            img_markdown = f"![{image_prompt}](/api/image?prompt={encoded_prompt})\n\n"
-            yield f"data: {json.dumps({'delta': img_markdown})}\n\n"
-            yield f"data: {json.dumps({'done': True})}\n\n"
-
-        return StreamingResponse(
-            image_event_stream(),
-            media_type="text/event-stream",
-            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache", "Connection": "keep-alive"}
-        )
 
     # Detect if user query is requesting document, presentation, spreadsheet, or all-format generation
     doc_topic, doc_format = clean_document_topic_and_format(latest_user_text)
@@ -781,7 +705,7 @@ async def chat(body: ChatBody):
         try:
             async for chunk in stream_chat_completion(llm_messages, web_search_context=search_context):
                 yield f"data: {json.dumps({'delta': chunk})}\n\n"
-        except GeminiError as e:
+        except LLMProviderError as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
             return
         except httpx.TimeoutException:
@@ -817,5 +741,12 @@ if __name__ == "__main__":
     print(">>> Launching TharikAI (Backend + Frontend)")
     print(f">>> Serving at: http://localhost:{port}")
     print("=" * 60)
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+    uvicorn.run(
+        "main:app",
+        host=host,
+        port=port,
+        reload=True,
+        access_log=False,
+        log_level="warning",
+    )
 

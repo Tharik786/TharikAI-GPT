@@ -1,5 +1,3 @@
-import React from "react";
-
 function getFirstName(user) {
   if (!user) return "";
 

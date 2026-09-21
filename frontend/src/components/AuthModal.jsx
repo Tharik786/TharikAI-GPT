@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { registerUser, loginUser } from "../api.js";
 import { authStorage } from "../storage.js";
 
