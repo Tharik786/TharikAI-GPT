@@ -104,10 +104,14 @@ async def _stream_openrouter(
         else:
             contents.append({"role": role, "content": msg_text})
 
+    default_max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS", "4096"))
+    fallback_model = os.getenv("OPENROUTER_FALLBACK_MODEL", "openrouter/free")
+
     payload = {
         "model": target_model,
         "messages": contents,
         "stream": True,
+        "max_tokens": default_max_tokens,
     }
 
     client = _get_http_client()
@@ -119,9 +123,21 @@ async def _stream_openrouter(
                 try:
                     err_json = json.loads(raw_err)
                     msg = err_json.get("error", {}).get("message", raw_err)
-                    raise LLMProviderError(f"OpenRouter API error ({response.status_code}): {msg}")
                 except json.JSONDecodeError:
-                    raise LLMProviderError(f"OpenRouter API error ({response.status_code}): {raw_err}")
+                    msg = raw_err
+
+                # If 402 Insufficient credits / max_tokens error, smoothly fallback to free model
+                if response.status_code == 402 and target_model != fallback_model:
+                    async for chunk in _stream_openrouter(
+                        api_key=api_key,
+                        messages=messages,
+                        system_prompt=system_prompt,
+                        model=fallback_model,
+                    ):
+                        yield chunk
+                    return
+
+                raise LLMProviderError(f"OpenRouter API error ({response.status_code}): {msg}")
 
             async for line in response.aiter_lines():
                 if not line or not line.startswith("data: "):
@@ -132,7 +148,10 @@ async def _stream_openrouter(
                 try:
                     data = json.loads(data_str)
                     delta = data.get("choices", [{}])[0].get("delta", {})
-                    content = delta.get("content", "") if isinstance(delta, dict) else str(delta or "")
+                    content = delta.get("content") or delta.get("text") or ""
+                    if isinstance(content, dict):
+                        content = content.get("text", "")
+                    content = str(content)
                     if content:
                         yield content
                 except json.JSONDecodeError:

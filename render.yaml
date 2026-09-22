@@ -14,3 +14,9 @@ services:
         value: "false"
       - key: CORS_ORIGINS
         value: "https://tharikai.netlify.app"
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: "openrouter/auto"
+      - key: OPENROUTER_MAX_TOKENS
+        value: "40000000000000096"

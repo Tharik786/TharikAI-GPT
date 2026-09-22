@@ -655,9 +655,9 @@ function MessageBubble({
       return ["excel"];
     }
 
-    // 4. Word (.docx) - If user specifically asked for Word, show ONLY Word!
+    // 4. Word (.docx) - If user specifically asked for Word / Doc / Document, show ONLY Word!
     if (
-      /\b(docx|word\s+doc|word\s+document|word\s+format|word\s+file|ms\s*word)\b/i.test(p) ||
+      /\b(docx?|doc|document|documents?|word\s+doc|word\s+document|word\s+format|word\s+file|ms\s*word)\b/i.test(p) ||
       (/\bword\b/i.test(p) && /\b(doc|document|generate|create|make|write|download|export|format)\b/i.test(p))
     ) {
       return ["word"];
@@ -734,7 +734,7 @@ function MessageBubble({
       const safeFilename = cleanTitle.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 36) || "TharikAI_Document";
 
       if (format === "word") {
-        exportToWordDoc(cleanTitle, cleanText, `${safeFilename}.docx`);
+        await exportToWordDoc(cleanTitle, cleanText, `${safeFilename}.docx`);
       } else if (format === "excel") {
         exportTableToExcel(cleanText, `${safeFilename}.xlsx`);
       } else if (format === "ppt") {

@@ -53,6 +53,8 @@ from app.docGenerator import (
     detect_document_prompt,
     clean_document_topic_and_format,
     strip_template_metadata,
+    generate_docx_bytes,
+    _document_bytes_cache,
 )
 from app.db import (
     init_db,
@@ -446,6 +448,55 @@ async def view_document_endpoint(render_id: str, filename: str = "document.pdf")
         raise HTTPException(status_code=404, detail=f"Document view failed: {str(e)}")
 
 
+@app.post("/api/documents/docx")
+async def export_docx_endpoint(body: DocumentGenerateBody):
+    """
+    Generates and downloads a genuine Microsoft Word (.docx) OpenXML document binary.
+    """
+    title = (body.title or "Document").strip()
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Content is required for DOCX export")
+
+    try:
+        docx_bytes = generate_docx_bytes(title, content)
+        clean_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', title[:40]).strip('_') or "Document"
+        filename = f"{clean_filename}.docx"
+        encoded_fn = urllib.parse.quote(filename)
+        return Response(
+            content=docx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"; filename*=UTF-8\'\'{encoded_fn}',
+                "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "Cache-Control": "no-cache",
+            },
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DOCX generation failed: {str(e)}")
+
+
+@app.get("/api/documents/download-docx/{render_id:path}")
+async def download_docx_endpoint(render_id: str, filename: str = "document.docx"):
+    """
+    Downloads cached genuine DOCX bytes.
+    """
+    if render_id not in _document_bytes_cache:
+        raise HTTPException(status_code=404, detail="Document not found or expired")
+    docx_bytes = _document_bytes_cache[render_id]
+    clean_fn = filename if filename.endswith(".docx") else f"{filename}.docx"
+    encoded_fn = urllib.parse.quote(clean_fn)
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="{clean_fn}"; filename*=UTF-8\'\'{encoded_fn}',
+            "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
+
+
 @app.api_route("/", methods=["GET", "HEAD"])
 async def root(request: Request):
     if SERVE_FRONTEND:
@@ -685,6 +736,21 @@ async def chat(body: ChatBody):
                     filename = render_res["filename"]
                     encoded_fn = urllib.parse.quote(filename)
                     doc_link = f"\n\n[📄 Download {doc_title}.pdf](/api/documents/download/{render_id}?filename={encoded_fn})\n\n"
+                    yield f"data: {json.dumps({'delta': doc_link})}\n\n"
+                except Exception as e:
+                    pass
+
+            # Render genuine Microsoft Word DOCX if the user asked for docx or all formats
+            if doc_format in ("docx", "doc", "document", "all"):
+                try:
+                    import uuid
+                    import asyncio
+                    docx_render_id = f"docx_{uuid.uuid4().hex[:12]}"
+                    docx_bytes = await asyncio.to_thread(generate_docx_bytes, title=doc_title, markdown_content=doc_content)
+                    _document_bytes_cache[docx_render_id] = docx_bytes
+                    clean_doc_fn = re.sub(r'[^a-zA-Z0-9_-]', '_', doc_title[:40]).strip('_') or "Document"
+                    encoded_fn = urllib.parse.quote(f"{clean_doc_fn}.docx")
+                    doc_link = f"\n\n[📄 Download {doc_title}.docx](/api/documents/download-docx/{docx_render_id}?filename={encoded_fn})\n\n"
                     yield f"data: {json.dumps({'delta': doc_link})}\n\n"
                 except Exception as e:
                     pass
